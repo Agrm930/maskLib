@@ -47,3 +47,5 @@ Drawing engine notes:
 - Deprecated code is kept around: `*_old.py` modules, `fluxoniumLib_newandbroken.py`, and deprecated top-level functions in `MaskLib.py` (marked with "Deprecated - use X instead" comments). Don't extend these — use the replacements in `markerLib`, `utilities`, and `Entities`.
 - `MaskLib.py` has duplicated import blocks at the top (historical accident); harmless but don't replicate the pattern.
 - Layers are referenced by name strings (e.g. `layer='MARKERS'`) that must match names passed to `SetupLayers`.
+- `Chip.add()` shifts objects that have a `.points` attribute (e.g. `Entities.SolidPline`) by `chip.origin_offset` (−chipsize/2 each axis) and grid-snaps them; plain `dxf.polyline`/`dxf.rectangle` objects are added as-is. Scripts that position `SolidPline`-based components therefore pre-compensate with `+chipsize/2` — when mixing entity types at the same location, apply `chip.origin_offset` manually to the plain entities (see `JunctionWithLeads` in `junction array.py`).
+- The layer name `703/0` is invalid per the DXF spec (`/` not allowed); `dxfwrite` writes it but strict readers like `ezdxf` refuse to open the file.

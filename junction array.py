@@ -12,6 +12,7 @@ import numpy as np
 
 import maskLib.MaskLib as m
 from maskLib.junctionLib import setupJunctionLayers, JcalcTabDims, JContact_slot
+from maskLib.fluxoniumLib import smallJJ, leads_for_tmon_dosearray_custom
 from maskLib.Entities import SolidPline, RoundRect
 from maskLib.markerLib import MarkerSquare, MarkerCross
 from maskLib.utilities import doMirrored, cornerRound
@@ -162,6 +163,48 @@ def Transmon3DWithShunt(chip, pos, padw=1500, padh=750, padw2=None, padh2=None, 
     else:
         print('You chose not flipped. This is not yet written, sorry.')
 
+
+def JunctionWithLeads(chip, pos):
+    '''
+    Draw the junction stack in the gap between the transmon pads, following
+    TmonDoseArrayPrathu.py: a lead from each pad (thin line + contact pad +
+    wedge taper) meeting a Dolan junction (small finger, bridge, big finger,
+    with undercut and shift layers) centered in the gap.
+
+    pos is the same point passed to Transmon3DWithShunt (bottom-left corner
+    of the top pad). All dimensions come from the JJ_* design parameters.
+    '''
+    total_JJ_length = 2*JJ_FINGER_LENGTH + JJ_BRIDGE_LENGTH
+    wedge_to_JJ = JJ_WEDGE_TO_WEDGE/2 - total_JJ_length/2
+    lead_pad_to_contact = TMON_SEPARATION/2 - JJ_WEDGE_TO_WEDGE/2 - JJ_WEDGE_LENGTH - JJ_CONTACT_LENGTH + JJ_PAD_OVERLAP
+    assert lead_pad_to_contact > 0, 'Leads do not fit: shrink JJ_WEDGE_TO_WEDGE or contact/wedge lengths, or increase TMON_SEPARATION'
+
+    # chip.add() shifts objects with a .points attribute (like the transmon's
+    # SolidPline pads) by chip.origin_offset, but not the plain
+    # polylines/rectangles drawn here -- apply the offset manually so both
+    # always land in the same place. With centerChip=False this is (0,0).
+    x0 = pos[0] + chip.origin_offset[0]
+    y0 = pos[1] + chip.origin_offset[1]
+
+    xc = x0 + TMON_PAD_WIDTH/2  # center line of the pads
+
+    for side, ystart in (('top', y0 + JJ_PAD_OVERLAP),
+                         ('bottom', y0 - TMON_SEPARATION - JJ_PAD_OVERLAP)):
+        leads_for_tmon_dosearray_custom(chip, m.Structure(chip, start=(xc, ystart), direction=0),
+                                        toporbottom=side, layer='LEADS',
+                                        leadLpadtocontact=lead_pad_to_contact, leadLcontacttoJJ=wedge_to_JJ,
+                                        leadW=JJ_LEAD_WIDTH, contactW=JJ_CONTACT_WIDTH,
+                                        contactL=JJ_CONTACT_LENGTH, wedgeL=JJ_WEDGE_LENGTH)
+
+    # junction centered vertically in the gap (x nudged by leadW/2 to counter
+    # the perpendicular lead offset smallJJ applies internally)
+    smallJJ(chip, m.Structure(chip, start=(xc + JJ_LEAD_WIDTH/2, y0 - TMON_SEPARATION/2), direction=90),
+            smallfingerlayer='SMALLFINGER', bigfingerlayer='BIGFINGER', bridgelayer='BRIDGE',
+            Ulayer='UNDERCUT', Slayer='SHIFT',
+            gap=JJ_BRIDGE_WIDTH, leadW=JJ_LEAD_WIDTH, fingerL=JJ_FINGER_LENGTH,
+            bigfingerW=JJ_BIGFINGER_WIDTH, smallfingerW=JJ_SMALLFINGER_WIDTH,
+            bridgeW=JJ_BRIDGE_WIDTH, bridgeL=JJ_BRIDGE_LENGTH, undercut=JJ_UNDERCUT)
+
 # ===============================================================================
 # Design Parameters - Change these to modify the design
 # ===============================================================================
@@ -181,6 +224,22 @@ TMON_SEPARATION = 130      # Separation between pads in microns
 TMON_SHUNT_WIDTH = 5       # Width of shunt line in microns
 TMON_SHUNT_DIST = 50       # Distance from pads to shunt in microns
 TMON_SHUNT_LENGTH = TMON_SEPARATION + TMON_PAD_HEIGHT  # Total shunt length in microns
+
+# Junction parameters (leads + Dolan junction drawn in the gap between the pads)
+# Lead/contact geometry follows TmonDoseArrayPrathu.py, scaled down to fit the
+# 130 micron pad separation (Prathu's wedge-to-wedge span of 180 assumed a 400 micron gap)
+JJ_LEAD_WIDTH = 1            # Width of thin leads in microns
+JJ_CONTACT_WIDTH = 20        # Width of contact pads on the leads in microns
+JJ_CONTACT_LENGTH = 10       # Length of contact pads in microns
+JJ_WEDGE_LENGTH = 10         # Length of wedge taper from contact pad to thin lead in microns
+JJ_WEDGE_TO_WEDGE = 40       # Distance between the two wedge tips in microns (must fit inside TMON_SEPARATION)
+JJ_PAD_OVERLAP = 20          # How far leads overlap into the big pads in microns
+JJ_FINGER_LENGTH = 1.5       # Length of small/big fingers in microns
+JJ_SMALLFINGER_WIDTH = 0.140 # Width of small finger in microns
+JJ_BIGFINGER_WIDTH = 0.340   # Width of big finger in microns (small finger + 0.2)
+JJ_BRIDGE_WIDTH = 0.840      # Width of bridge in microns (small finger + 0.7)
+JJ_BRIDGE_LENGTH = 0.250     # Length of bridge in microns
+JJ_UNDERCUT = 0.2            # Undercut width in microns
 
 FRAME_LAYER = '703/0'      # Layer for chip frame boundary
 METAL_LAYER = 'BASEMETAL'  # Layer for metal structures
@@ -207,7 +266,13 @@ w.SetupLayers([
     ['DICEBORDER',5],
     ['Opt_Mark',3],
     ['TiW_Mark',7],
-    ['703/0', 9]
+    ['703/0', 9],
+    ['LEADS',6],
+    ['SMALLFINGER',1],
+    ['BIGFINGER',8],
+    ['BRIDGE',2],
+    ['UNDERCUT',30],
+    ['SHIFT',40]
     ])
 
 #setup junction layers
@@ -231,7 +296,9 @@ doMirrored(MarkerCross, w, (45000,0),(500,500), 20,layer='Opt_Mark',mirrorX=True
 # ===============================================================================
 class SimpleChiplet(m.Chip):
     def __init__(self, wafer, chipID, layer, defaults=None, **kwargs):
-        m.Chip.__init__(self, wafer, chipID, layer, defaults={'w':200, 'r_out':10, 'r_ins':0})
+        # centerChip=False: chip.add() applies no origin shift, so all entity
+        # types share one corner-based coordinate system (no +chipsize/2 hacks)
+        m.Chip.__init__(self, wafer, chipID, layer, defaults={'w':200, 'r_out':10, 'r_ins':0}, centerChip=False)
         if defaults is not None:
             for d in defaults:
                 self.defaults[d] = defaults[d]
@@ -259,15 +326,19 @@ class SimpleChiplet(m.Chip):
                 ))
                 
                 # Transmon3D with shunt (scaled to fit 500 micron field)
-                Transmon3DWithShunt(self, (cx + CHIPLET_SIZE_x/2 - TMON_PAD_WIDTH/2, cy + CHIPLET_SIZE_y/2 + TMON_SEPARATION/2), 
-                                    padw=TMON_PAD_WIDTH, padh=TMON_PAD_HEIGHT, 
-                                    leadw=TMON_LEAD_WIDTH, leadh=TMON_LEAD_HEIGHT, 
-                                    padradius=TMON_PAD_RADIUS, 
-                                    separation=TMON_SEPARATION, shunt=True, 
-                                    shunt_width=TMON_SHUNT_WIDTH, shunt_dist=TMON_SHUNT_DIST, 
-                                    shunt_length=TMON_SHUNT_LENGTH, shunt_side='left', flipped=True, 
-                                    tab=True, tab_offset_x=CHIPLET_SIZE_x, tab_offset_y=CHIPLET_SIZE_y, tab_shift_x=TMON_PAD_WIDTH/2,
+                tpos = (cx - TMON_PAD_WIDTH/2, cy + TMON_SEPARATION/2)
+                Transmon3DWithShunt(self, tpos,
+                                    padw=TMON_PAD_WIDTH, padh=TMON_PAD_HEIGHT,
+                                    leadw=TMON_LEAD_WIDTH, leadh=TMON_LEAD_HEIGHT,
+                                    padradius=TMON_PAD_RADIUS,
+                                    separation=TMON_SEPARATION, shunt=True,
+                                    shunt_width=TMON_SHUNT_WIDTH, shunt_dist=TMON_SHUNT_DIST,
+                                    shunt_length=TMON_SHUNT_LENGTH, shunt_side='left', flipped=True,
+                                    tab=False,
                                     layer=wafer.lyr(METAL_LAYER))
+
+                # Leads and Dolan junction in the pad gap
+                JunctionWithLeads(self, tpos)
         
         # Markers at four corners of the chiplet (placed once, outside field loop)
         marker_size = 100  # marker size in microns
@@ -288,14 +359,16 @@ CORNER_CHIP_SIZE = int((CHIPLET_SIZE_x-FIELD_SAW-2*FIELD_PADDING)//2 + 2*FIELD_P
 
 class CornerChip(m.Chip):
     def __init__(self, wafer, chipID, layer, defaults=None, **kwargs):
-        # Temporarily override wafer chip dimensions so Chip sets the correct origin offset.
+        # Temporarily override wafer chip dimensions so Chip gets the correct width/height.
         original_frame = wafer.frame
         original_chip_x = wafer.chipX
         original_chip_y = wafer.chipY
         wafer.frame = False
         wafer.chipX = CORNER_CHIP_SIZE + wafer.sawWidth
         wafer.chipY = CORNER_CHIP_SIZE + wafer.sawWidth
-        m.Chip.__init__(self, wafer, chipID, layer, defaults={'w':200, 'r_out':10, 'r_ins':0})
+        # centerChip=False: chip.add() applies no origin shift, so all entity
+        # types share one corner-based coordinate system (no +chipsize/2 hacks)
+        m.Chip.__init__(self, wafer, chipID, layer, defaults={'w':200, 'r_out':10, 'r_ins':0}, centerChip=False)
         wafer.chipX = original_chip_x
         wafer.chipY = original_chip_y
         wafer.frame = original_frame
@@ -327,15 +400,19 @@ class CornerChip(m.Chip):
                 ))
                 
                 # Transmon3D with shunt (scaled to fit 500 micron field)
-                Transmon3DWithShunt(self, (cx + CORNER_CHIP_SIZE/2 - TMON_PAD_WIDTH/2, cy + CORNER_CHIP_SIZE/2 + TMON_SEPARATION/2), 
-                                    padw=TMON_PAD_WIDTH, padh=TMON_PAD_HEIGHT, 
-                                    leadw=TMON_LEAD_WIDTH, leadh=TMON_LEAD_HEIGHT, 
-                                    padradius=TMON_PAD_RADIUS, 
-                                    separation=TMON_SEPARATION, shunt=True, 
-                                    shunt_width=TMON_SHUNT_WIDTH, shunt_dist=TMON_SHUNT_DIST, 
-                                    shunt_length=TMON_SHUNT_LENGTH, shunt_side='left', flipped=True, 
-                                    tab=True, tab_offset_x=CORNER_CHIP_SIZE, tab_offset_y=CORNER_CHIP_SIZE, tab_shift_x=TMON_PAD_WIDTH/2,
+                tpos = (cx - TMON_PAD_WIDTH/2, cy + TMON_SEPARATION/2)
+                Transmon3DWithShunt(self, tpos,
+                                    padw=TMON_PAD_WIDTH, padh=TMON_PAD_HEIGHT,
+                                    leadw=TMON_LEAD_WIDTH, leadh=TMON_LEAD_HEIGHT,
+                                    padradius=TMON_PAD_RADIUS,
+                                    separation=TMON_SEPARATION, shunt=True,
+                                    shunt_width=TMON_SHUNT_WIDTH, shunt_dist=TMON_SHUNT_DIST,
+                                    shunt_length=TMON_SHUNT_LENGTH, shunt_side='left', flipped=True,
+                                    tab=False,
                                     layer=wafer.lyr(METAL_LAYER))
+
+                # Leads and Dolan junction in the pad gap
+                JunctionWithLeads(self, tpos)
         
 
          # Markers at four corners of the chiplet (placed once, outside field loop)
