@@ -1,0 +1,19 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		 {
+			"label": "Run Current Python Script",
+			"type": "shell",
+			"command": "pwsh",
+			"args": [
+				"-Command",
+				". .\\masklib\\Scripts\\Activate.ps1; python ${file}"
+			],
+			"problemMatcher": [],
+			"group": {
+				"kind": "build",
+				"isDefault": true
+			}
+		}
+	]
+}
