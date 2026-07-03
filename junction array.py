@@ -4,14 +4,14 @@
 Created on Thu Jun 17 13:52:03 2021
 
 @author: sasha
-Edited by Agrim, 2026 (junction stack, centered tabs, corner-based coordinates)
+Edited by Agrim, 2026 (junction stack, centered tabs, corner-based
+coordinates, 3D parameter sweep via maskLib.arrayLib)
 """
-
-#Run in terminal cd /Users/eddiemarici/Desktop/Masklib/maskLib && PYTHONPATH=/Users/eddiemarici/Desktop/Masklib python3 "DXF/3DMM_Rutgers1_Weak_Coupled_Transmon (1).py" 2>&1
 
 import numpy as np
 
 import maskLib.MaskLib as m
+from maskLib.arrayLib import Sweep3D, dose_layer
 from maskLib.junctionLib import setupJunctionLayers, JcalcTabDims, JContact_slot, Transmon3DWithShunt
 from maskLib.fluxoniumLib import smallJJ, leads_for_tmon_dosearray_custom
 from maskLib.Entities import SolidPline, RoundRect
@@ -20,6 +20,122 @@ from maskLib.utilities import doMirrored, cornerRound
 from dxfwrite import DXFEngine as dxf
 from dxfwrite import const
 
+# ===============================================================================
+# 1) Wafer & field-array geometry
+# ===============================================================================
+FIELD_PADDING = 500     # Padding inside each chiplet (keeps fields away from the edge)
+FIELD_SIZE = 500        # Field size in microns
+FIELD_SAW = 0           # Spacing between fields (saw width) in microns
+CHIPLET_SIZE_x = 21000 + FIELD_SAW      # Large chiplet dimensions in microns
+CHIPLET_SIZE_y = 21000 + FIELD_SAW      # Large chiplet dimensions in microns
+
+# field grid dimensions (derived): 40 x 40 for the default sizes above
+FIELD_STEP = FIELD_SIZE + FIELD_SAW
+GRID_NX = int((CHIPLET_SIZE_x - 2 * FIELD_PADDING) / FIELD_STEP)
+GRID_NY = int((CHIPLET_SIZE_y - 2 * FIELD_PADDING) / FIELD_STEP)
+
+# corner chips (smaller chips placed at the wafer corners)
+CORNER_CHIP_SIZE = int((CHIPLET_SIZE_x-FIELD_SAW-2*FIELD_PADDING)//2 + 2*FIELD_PADDING)
+
+FRAME_LAYER = '703/0'      # Layer for chip frame boundary
+METAL_LAYER = 'BASEMETAL'  # Layer for metal structures
+
+# output toggles
+RENDER_FULL_WAFER = False          # Set False to skip writing the full wafer DXF
+EXPORT_SAMPLE_CHIPLET_DXF = True   # Set False to skip the standalone chiplet DXF
+EXPORT_CORNER_CHIP_DXF = True      # Set False to skip the standalone corner-chip DXF
+REUSE_IDENTICAL_CHIPS = True       # Reuse one generated block for repeated chiplets/corner chips
+EXPORT_SWEEP_MAP = True            # Write <wafer>_sweep_map.xlsx (params, minimap, per-param gradient maps)
+
+# ===============================================================================
+# 2) Transmon & junction parameters (defaults; the sweep overrides per field)
+# ===============================================================================
+# Transmon3DWithShunt parameters (scaled to fit 500 micron fields)
+TMON_PAD_WIDTH = 200       # Width of transmon pads in microns
+TMON_PAD_HEIGHT = 100      # Height of transmon pads in microns
+TMON_LEAD_WIDTH = 20       # Width of leads in microns
+TMON_LEAD_HEIGHT = 100     # Height of leads in microns
+TMON_PAD_RADIUS = 10       # Radius of pad corners in microns
+TMON_SEPARATION = 130      # Separation between pads in microns
+TMON_SHUNT_WIDTH = 5       # Width of shunt line in microns
+TMON_SHUNT_DIST = 50       # Distance from pads to shunt in microns
+TMON_SHUNT_LENGTH = TMON_SEPARATION + TMON_PAD_HEIGHT  # Total shunt length in microns
+
+# Junction parameters (leads + Dolan junction drawn in the gap between the pads)
+# Lead/contact geometry follows TmonDoseArrayPrathu.py, scaled down to fit the
+# 130 micron pad separation (Prathu's wedge-to-wedge span of 180 assumed a 400 micron gap)
+JJ_LEAD_WIDTH = 1            # Width of thin leads in microns
+JJ_CONTACT_WIDTH = 20        # Width of contact pads on the leads in microns
+JJ_CONTACT_LENGTH = 10       # Length of contact pads in microns
+JJ_WEDGE_LENGTH = 10         # Length of wedge taper from contact pad to thin lead in microns
+JJ_WEDGE_TO_WEDGE = 40       # Distance between the two wedge tips in microns (must fit inside TMON_SEPARATION)
+JJ_PAD_OVERLAP = 20          # How far leads overlap into the big pads in microns
+JJ_FINGER_LENGTH = 1.5       # Length of small/big fingers in microns
+JJ_SMALLFINGER_WIDTH = 0.140 # Width of small finger in microns
+JJ_BIGFINGER_WIDTH = 0.340   # Width of big finger in microns (small finger + 0.2)
+JJ_BRIDGE_WIDTH = 0.840      # Width of bridge in microns (small finger + 0.7)
+JJ_BRIDGE_LENGTH = 0.250     # Length of bridge in microns
+JJ_UNDERCUT = 0.2            # Undercut width in microns
+
+# ===============================================================================
+# 3) Parameter sweep configuration (3D: tile columns x tile rows x tiles)
+# ===============================================================================
+# The field grid is tiled with identical TILE_NX x TILE_NY blocks ("tiles").
+# Each sweep axis is a dict {parameter_name: (start, step)} -- the number of
+# steps comes from the axis (TILE_NX, TILE_NY, or the number of tiles) and
+# the final value is calculated automatically. Several parameters can share
+# one axis (they sweep in lockstep). Use {} to disable an axis.
+#
+# Geometry parameters change the drawn shapes; dose parameters redirect
+# shapes onto auto-generated per-dose layers (e.g. BRIDGE_400) -- never add
+# those to SetupLayers by hand.
+#
+# Every field gets a corner label like 'A0103' (tile A, column 01, row 03).
+# The label -> parameter mapping is drawn as a legend in the chip margin and
+# exported to <wafer>_sweep_map.xlsx (parameter table, label minimap, and a
+# gradient-colored value map per swept parameter).
+
+TILE_NX = 10   # tile size in fields; must evenly divide the chiplet field grid
+TILE_NY = 20
+
+SWEEP_COL = {                                # 10 steps along x in each tile
+    'smallfinger_width': (0.100, 0.010),     # 0.10 -> 0.19 um
+    'bigfinger_width':   (0.300, 0.010),     # locked to smallfinger + 0.2
+}
+SWEEP_ROW = {                                # 20 steps along y in each tile
+    'bridge_dose': (400, 40),                # 400 -> 1160
+}
+SWEEP_TILE = {                               # one step per tile (8 tiles A-H)
+    'smallfinger_dose': (800, 100),          # 800 -> 1500
+}
+
+# which JJ geometry kwarg each geometry parameter controls
+GEOMETRY_PARAMS = {
+    'smallfinger_width': 'smallfingerW',
+    'bigfinger_width':   'bigfingerW',
+    'bridge_width':      'bridgeW',
+    'bridge_length':     'bridgeL',
+    'finger_length':     'fingerL',
+}
+# which layer family each dose parameter redirects (layer = FAMILY_<dose>)
+DOSE_PARAMS = {
+    'pads_dose':        'BASEMETAL',
+    'leads_dose':       'LEADS',
+    'smallfinger_dose': 'SMALLFINGER',
+    'bigfinger_dose':   'BIGFINGER',
+    'bridge_dose':      'BRIDGE',
+    'undercut_dose':    'UNDERCUT',
+    'shift_dose':       'SHIFT',
+}
+
+sweep = Sweep3D(GRID_NX, GRID_NY, TILE_NX, TILE_NY,
+                col=SWEEP_COL, row=SWEEP_ROW, tile=SWEEP_TILE,
+                geometry_params=GEOMETRY_PARAMS, dose_params=DOSE_PARAMS)
+sweep.print_summary()
+
+# ===============================================================================
+# 4) Drawing functions
+# ===============================================================================
 def JunctionWithLeads(chip, pos, params=None):
     '''
     Draw the junction stack in the gap between the transmon pads, following
@@ -29,7 +145,7 @@ def JunctionWithLeads(chip, pos, params=None):
 
     pos is the same point passed to Transmon3DWithShunt (bottom-left corner
     of the top pad). Dimensions default to the JJ_* design parameters;
-    params (from field_params) overrides geometry values and redirects
+    params (from sweep.field) overrides geometry values and redirects
     shapes onto per-dose layers (e.g. BRIDGE_400).
     '''
     if params is None:
@@ -78,189 +194,37 @@ def JunctionWithLeads(chip, pos, params=None):
             bigfingerW=geo['bigfingerW'], smallfingerW=geo['smallfingerW'],
             bridgeW=geo['bridgeW'], bridgeL=geo['bridgeL'], undercut=JJ_UNDERCUT)
 
-# ===============================================================================
-# Design Parameters - Change these to modify the design
-# ===============================================================================
-FIELD_PADDING = 500     # Padding inside each field (keeps pads away from field edge)
-FIELD_SIZE = 500       # Field size in microns
-FIELD_SAW = 0         # Spacing between fields (saw width) in microns
-CHIPLET_SIZE_x = 21000 + FIELD_SAW      # Large chiplet dimensions in microns
-CHIPLET_SIZE_y = 21000 + FIELD_SAW      # Large chiplet dimensions in microns
 
-# Transmon3DWithShunt parameters (scaled to fit 500 micron fields)
-TMON_PAD_WIDTH = 200       # Width of transmon pads in microns
-TMON_PAD_HEIGHT = 100      # Height of transmon pads in microns
-TMON_LEAD_WIDTH = 20       # Width of leads in microns
-TMON_LEAD_HEIGHT = 100     # Height of leads in microns
-TMON_PAD_RADIUS = 10       # Radius of pad corners in microns
-TMON_SEPARATION = 130      # Separation between pads in microns
-TMON_SHUNT_WIDTH = 5       # Width of shunt line in microns
-TMON_SHUNT_DIST = 50       # Distance from pads to shunt in microns
-TMON_SHUNT_LENGTH = TMON_SEPARATION + TMON_PAD_HEIGHT  # Total shunt length in microns
+def draw_field(chip, wafer, cx, cy, params, flabel):
+    '''one complete field at center (cx, cy): frame, transmon, junction, label'''
+    # Field frame on 703/0 layer
+    chip.add(dxf.rectangle(
+        (cx - FIELD_SIZE/2, cy - FIELD_SIZE/2),
+        FIELD_SIZE, FIELD_SIZE,
+        layer=wafer.lyr(FRAME_LAYER)
+    ))
 
-# Junction parameters (leads + Dolan junction drawn in the gap between the pads)
-# Lead/contact geometry follows TmonDoseArrayPrathu.py, scaled down to fit the
-# 130 micron pad separation (Prathu's wedge-to-wedge span of 180 assumed a 400 micron gap)
-JJ_LEAD_WIDTH = 1            # Width of thin leads in microns
-JJ_CONTACT_WIDTH = 20        # Width of contact pads on the leads in microns
-JJ_CONTACT_LENGTH = 10       # Length of contact pads in microns
-JJ_WEDGE_LENGTH = 10         # Length of wedge taper from contact pad to thin lead in microns
-JJ_WEDGE_TO_WEDGE = 40       # Distance between the two wedge tips in microns (must fit inside TMON_SEPARATION)
-JJ_PAD_OVERLAP = 20          # How far leads overlap into the big pads in microns
-JJ_FINGER_LENGTH = 1.5       # Length of small/big fingers in microns
-JJ_SMALLFINGER_WIDTH = 0.140 # Width of small finger in microns
-JJ_BIGFINGER_WIDTH = 0.340   # Width of big finger in microns (small finger + 0.2)
-JJ_BRIDGE_WIDTH = 0.840      # Width of bridge in microns (small finger + 0.7)
-JJ_BRIDGE_LENGTH = 0.250     # Length of bridge in microns
-JJ_UNDERCUT = 0.2            # Undercut width in microns
+    # Transmon3D with shunt (scaled to fit 500 micron field)
+    tpos = (cx - TMON_PAD_WIDTH/2, cy + TMON_SEPARATION/2)
+    Transmon3DWithShunt(chip, tpos,
+                        padw=TMON_PAD_WIDTH, padh=TMON_PAD_HEIGHT,
+                        leadw=TMON_LEAD_WIDTH, leadh=TMON_LEAD_HEIGHT,
+                        padradius=TMON_PAD_RADIUS,
+                        separation=TMON_SEPARATION, shunt=True,
+                        shunt_width=TMON_SHUNT_WIDTH, shunt_dist=TMON_SHUNT_DIST,
+                        shunt_length=TMON_SHUNT_LENGTH, shunt_side='left', flipped=True,
+                        tab=True, tab_shift_x=TMON_PAD_WIDTH/2 - TMON_LEAD_WIDTH/2,
+                        layer=wafer.lyr(dose_layer(METAL_LAYER, params, 'pads_dose')))
 
-# ===============================================================================
-# Parameter sweep configuration (Prathu-style dose/geometry array, 3D)
-# ===============================================================================
-# The field grid is tiled with identical TILE_NX x TILE_NY blocks ("tiles").
-# Three sweep axes:
-#   SWEEP_COL  -- varies along x inside a tile (each list: TILE_NX values)
-#   SWEEP_ROW  -- varies along y inside a tile (each list: TILE_NY values)
-#   SWEEP_TILE -- varies from tile to tile     (each list: one value per tile)
-# Each axis is a dict {parameter_name: list_of_values}, so one axis can sweep
-# several parameters in lockstep (e.g. keep bigfinger = smallfinger + 0.2).
-# Use an empty dict {} to disable an axis.
-#
-# Parameter names are either geometry parameters (change the drawn shapes,
-# see GEOMETRY_PARAMS) or dose parameters (change which layer a shape lands
-# on, see DOSE_PARAMS). Dose layers like BRIDGE_400 are generated
-# automatically -- never add them to SetupLayers by hand.
-#
-# Every field gets a corner label like 'A0103' (chip/tile A, column 01,
-# row 03) -- letter = tile, then two digits column, two digits row. The
-# label -> parameter mapping is drawn as a legend in the chip margin and
-# saved to a two-sheet Excel workbook next to the DXF output (sheet 1:
-# parameter table, sheet 2: a minimap of labels laid out like the chip).
+    # Leads and Dolan junction in the pad gap
+    JunctionWithLeads(chip, tpos, params)
 
-TILE_NX = 10   # tile size in fields; must evenly divide the chiplet field grid
-TILE_NY = 20
+    # field label (tile letter + column + row, e.g. A0103) in the
+    # bottom-left corner, clear of the pads and shunt
+    chip.add_chip_label(flabel,
+                        (cx - FIELD_SIZE/2 + 50, cy - FIELD_SIZE/2 + 42),
+                        height=22, layer='LABELS')
 
-SWEEP_COL = {
-    'smallfinger_width': np.round(np.linspace(0.100, 0.180, TILE_NX), 4),
-    'bigfinger_width':   np.round(np.linspace(0.100, 0.180, TILE_NX) + 0.2, 4),
-}
-SWEEP_ROW = {
-    'bridge_dose': np.rint(np.linspace(400, 1200, TILE_NY)),
-}
-SWEEP_TILE = {
-    'smallfinger_dose': np.array([800, 900, 1000, 1100, 1200, 1300, 1400, 1500]),
-}
-
-EXPORT_SWEEP_MAP = True   # write <wafer>_sweep_map.xlsx (params table + minimap)
-
-# which JJ geometry kwarg each geometry parameter controls
-GEOMETRY_PARAMS = {
-    'smallfinger_width': 'smallfingerW',
-    'bigfinger_width':   'bigfingerW',
-    'bridge_width':      'bridgeW',
-    'bridge_length':     'bridgeL',
-    'finger_length':     'fingerL',
-}
-# which layer family each dose parameter redirects (layer = FAMILY_<dose>)
-DOSE_PARAMS = {
-    'pads_dose':        'BASEMETAL',
-    'leads_dose':       'LEADS',
-    'smallfinger_dose': 'SMALLFINGER',
-    'bigfinger_dose':   'BIGFINGER',
-    'bridge_dose':      'BRIDGE',
-    'undercut_dose':    'UNDERCUT',
-    'shift_dose':       'SHIFT',
-}
-
-
-def fmt_value(v):
-    '''compact number formatting for layer names and labels (400.0 -> 400)'''
-    return '%g' % v
-
-
-def axis_len(axis):
-    lens = {len(v) for v in axis.values()}
-    assert len(lens) <= 1, 'all value lists in one sweep axis must be the same length'
-    return lens.pop() if lens else 0
-
-
-# sanity checks: value list lengths must match the tile dimensions
-assert axis_len(SWEEP_COL) in (0, TILE_NX), 'SWEEP_COL lists must have TILE_NX values'
-assert axis_len(SWEEP_ROW) in (0, TILE_NY), 'SWEEP_ROW lists must have TILE_NY values'
-for _axis in (SWEEP_COL, SWEEP_ROW, SWEEP_TILE):
-    for _name in _axis:
-        assert _name in GEOMETRY_PARAMS or _name in DOSE_PARAMS, 'unknown sweep parameter: %s' % _name
-
-
-def sweep_dose_layers():
-    '''every dose layer implied by the sweep, e.g. [BRIDGE_400, BRIDGE_442, ...]'''
-    out = []
-    for axis in (SWEEP_COL, SWEEP_ROW, SWEEP_TILE):
-        for name, vals in axis.items():
-            if name in DOSE_PARAMS:
-                for v in vals:
-                    lyr = '%s_%s' % (DOSE_PARAMS[name], fmt_value(v))
-                    if lyr not in out:
-                        out.append(lyr)
-    return out
-
-
-def dose_layer(base, params, dose_name):
-    '''layer for a structure: BASE if its dose is not swept, else BASE_<dose>'''
-    v = params.get(dose_name)
-    return base if v is None else '%s_%s' % (base, fmt_value(v))
-
-
-def index_letter(i):
-    '''0->A ... 25->Z, 26->AA, ... (spreadsheet style)'''
-    s = ''
-    while True:
-        s = chr(ord('A') + i % 26) + s
-        i = i // 26 - 1
-        if i < 0:
-            return s
-
-
-def field_params(ix, iy, grid_nx, grid_ny, strict=True):
-    '''
-    Sweep parameters and label for field (ix, iy) of a grid_nx x grid_ny grid.
-    Returns (params, label): params is {parameter_name: value}, label is e.g.
-    'A0103' = chip/tile A, column 01, row 03. With strict=True the tile must
-    fill the grid evenly (use strict=False for secondary chips like the
-    corner chips, where tile/param indices simply wrap around).
-    '''
-    if strict:
-        assert grid_nx % TILE_NX == 0 and grid_ny % TILE_NY == 0, (
-            'Tile size %dx%d does not evenly fill the %dx%d field grid -- '
-            'pick tile dimensions that divide the grid'
-            % (TILE_NX, TILE_NY, grid_nx, grid_ny))
-    ti, tj = ix % TILE_NX, iy % TILE_NY
-    tile = (ix // TILE_NX) + (iy // TILE_NY) * (grid_nx // TILE_NX)
-    params = {}
-    for axis, idx in ((SWEEP_COL, ti), (SWEEP_ROW, tj)):
-        for name, vals in axis.items():
-            params[name] = vals[idx]
-    for name, vals in SWEEP_TILE.items():
-        params[name] = vals[tile % len(vals)]
-    return params, '%s%02d%02d' % (index_letter(tile), ti, tj)
-
-
-def sweep_legend_lines():
-    '''human-readable summary of the sweep, drawn in the chip margin'''
-    lines = []
-    for tag, axis in (('COLS', SWEEP_COL), ('ROWS', SWEEP_ROW), ('TILES', SWEEP_TILE)):
-        for name, vals in axis.items():
-            lines.append('%s: %s = %s to %s in %d steps'
-                         % (tag, name, fmt_value(vals[0]), fmt_value(vals[-1]), len(vals)))
-    return lines
-
-FRAME_LAYER = '703/0'      # Layer for chip frame boundary
-METAL_LAYER = 'BASEMETAL'  # Layer for metal structures
-
-RENDER_FULL_WAFER = True          # Set False to skip writing the full wafer DXF
-EXPORT_SAMPLE_CHIPLET_DXF = True  # Set False to skip the standalone chiplet DXF
-EXPORT_CORNER_CHIP_DXF = True     # Set False to skip the standalone corner-chip DXF
-REUSE_IDENTICAL_CHIPS = True      # Reuse one generated block for repeated chiplets/corner chips
 
 # ===============================================================================
 # wafer setup
@@ -290,13 +254,7 @@ BASE_LAYERS = [
     ['SHIFT',40],
     ['LABELS',11],
     ]
-AUTO_DOSE_LAYERS = sweep_dose_layers()
-print('Sweep: %d auto-generated dose layers' % len(AUTO_DOSE_LAYERS)
-      + (' (%s ... %s)' % (AUTO_DOSE_LAYERS[0], AUTO_DOSE_LAYERS[-1]) if AUTO_DOSE_LAYERS else ''))
-w.SetupLayers(BASE_LAYERS + [[name, 50 + k % 200] for k, name in enumerate(AUTO_DOSE_LAYERS)])
-
-#setup junction layers
-#setupJunctionLayers(w)
+w.SetupLayers(BASE_LAYERS + [[name, 50 + k % 200] for k, name in enumerate(sweep.dose_layers())])
 
 #initialize the wafer (remember to finalize any wafer properties like layers before initializing!)
 w.init()
@@ -307,7 +265,6 @@ w.DicingBorder(layer='DICEBORDER')
 
 #do optical markers
 #(note: mirrorX and mirrorY are true by default, but I've exposed them here to demonstrate how they work)
-#doMirrored(MarkerCross, w, (30000,30000),(500,500), 20,layer='Opt_Mark',mirrorX=True,mirrorY=True)
 doMirrored(MarkerCross, w, (0,45000),(500,500), 20,layer='Opt_Mark',mirrorX=True,mirrorY=True)
 doMirrored(MarkerCross, w, (45000,0),(500,500), 20,layer='Opt_Mark',mirrorX=True,mirrorY=True)
 
@@ -322,90 +279,35 @@ class SimpleChiplet(m.Chip):
         if defaults is not None:
             for d in defaults:
                 self.defaults[d] = defaults[d]
-        
-        # Tile fields inside the large chiplet
-        step = FIELD_SIZE + FIELD_SAW
-        nx = int((CHIPLET_SIZE_x - 2 * FIELD_PADDING) / step)
-        ny = int((CHIPLET_SIZE_y - 2 * FIELD_PADDING) / step)
-        print(f"Fields per chiplet: nx={nx}, ny={ny} ({nx*ny} total)")
-        
+
+        print(f"Fields per chiplet: {GRID_NX} x {GRID_NY} ({GRID_NX*GRID_NY} total)")
+
         # Center the field grid in the large chiplet
-        offset_x = (CHIPLET_SIZE_x - nx * step) / 2 + step / 2
-        offset_y = (CHIPLET_SIZE_y - ny * step) / 2 + step / 2
-        
-        n_tiles = (nx // TILE_NX) * (ny // TILE_NY)
-        print(f"Sweep tiles per chiplet: {nx//TILE_NX} x {ny//TILE_NY} = {n_tiles}")
-        for name, vals in SWEEP_TILE.items():
-            if len(vals) != n_tiles:
-                print(f"  WARNING: {name} has {len(vals)} values for {n_tiles} tiles "
-                      "(indices wrap around)")
+        offset_x = (CHIPLET_SIZE_x - GRID_NX * FIELD_STEP) / 2 + FIELD_STEP / 2
+        offset_y = (CHIPLET_SIZE_y - GRID_NY * FIELD_STEP) / 2 + FIELD_STEP / 2
 
-        for ix in range(nx):
-            for iy in range(ny):
-                cx = offset_x + ix * step
-                cy = offset_y + iy * step
-
-                # sweep parameters + label for this field
-                params, flabel = field_params(ix, iy, nx, ny)
-
-                # Field frame on 703/0 layer
-                self.add(dxf.rectangle(
-                    (cx - FIELD_SIZE/2, cy - FIELD_SIZE/2),
-                    FIELD_SIZE, FIELD_SIZE,
-                    layer=wafer.lyr(FRAME_LAYER)
-                ))
-
-                # Transmon3D with shunt (scaled to fit 500 micron field)
-                tpos = (cx - TMON_PAD_WIDTH/2, cy + TMON_SEPARATION/2)
-                Transmon3DWithShunt(self, tpos,
-                                    padw=TMON_PAD_WIDTH, padh=TMON_PAD_HEIGHT,
-                                    leadw=TMON_LEAD_WIDTH, leadh=TMON_LEAD_HEIGHT,
-                                    padradius=TMON_PAD_RADIUS,
-                                    separation=TMON_SEPARATION, shunt=True,
-                                    shunt_width=TMON_SHUNT_WIDTH, shunt_dist=TMON_SHUNT_DIST,
-                                    shunt_length=TMON_SHUNT_LENGTH, shunt_side='left', flipped=True,
-                                    tab=True, tab_shift_x=TMON_PAD_WIDTH/2 - TMON_LEAD_WIDTH/2,
-                                    layer=wafer.lyr(dose_layer(METAL_LAYER, params, 'pads_dose')))
-
-                # Leads and Dolan junction in the pad gap
-                JunctionWithLeads(self, tpos, params)
-
-                # field label (tile letter + column + row, e.g. A0103) in the
-                # bottom-left corner, clear of the pads and shunt
-                self.add_chip_label(flabel,
-                                    (cx - FIELD_SIZE/2 + 50, cy - FIELD_SIZE/2 + 42),
-                                    height=22, layer='LABELS')
+        for ix in range(GRID_NX):
+            for iy in range(GRID_NY):
+                params, flabel = sweep.field(ix, iy)
+                draw_field(self, wafer,
+                           offset_x + ix * FIELD_STEP, offset_y + iy * FIELD_STEP,
+                           params, flabel)
 
         # sweep legend in the bottom margin, below the field grid
-        for k, line in enumerate(sweep_legend_lines()):
+        for k, line in enumerate(sweep.legend_lines()):
             self.add_chip_label(line, (CHIPLET_SIZE_x/2, 400 - 110*k),
                                 height=70, layer='LABELS')
 
-        # sweep workbook for the lab notebook: sheet 1 is the full
-        # label -> parameters table, sheet 2 is a minimap -- labels laid out
-        # in cells matching their position on the chip (top row = top of chip)
+        # sweep workbook for the lab notebook (parameter table, label
+        # minimap, and a gradient-colored value map per swept parameter)
         if EXPORT_SWEEP_MAP:
-            from openpyxl import Workbook
-            pnames = sorted({*SWEEP_COL, *SWEEP_ROW, *SWEEP_TILE})
-            wb = Workbook()
-            ws = wb.active
-            ws.title = 'parameters'
-            ws.append(['label', 'ix', 'iy'] + pnames)
-            for ix in range(nx):
-                for iy in range(ny):
-                    params, flabel = field_params(ix, iy, nx, ny)
-                    ws.append([flabel, ix, iy] + [float(params[p]) for p in pnames])
-            wsmap = wb.create_sheet('map')
-            wsmap.append(['iy\\ix'] + list(range(nx)))
-            for iy in reversed(range(ny)):
-                wsmap.append([iy] + [field_params(ix, iy, nx, ny)[1] for ix in range(nx)])
             xlsx_path = wafer.path + wafer.fileName + '_sweep_map.xlsx'
-            wb.save(xlsx_path)
+            sweep.export_workbook(xlsx_path)
             print('Sweep map saved to', xlsx_path)
 
         # Markers at four corners of the chiplet (placed once, outside field loop)
         marker_size = 100  # marker size in microns
-        
+
         # Bottom-left
         MarkerCross(self, (FIELD_PADDING/2, FIELD_PADDING/2), (marker_size, marker_size), 5, layer='TiW_Mark')
         # Bottom-right
@@ -418,8 +320,6 @@ class SimpleChiplet(m.Chip):
 # ===============================================================================
 # Corner chip class definition (smaller chips for wafer corners)
 # ===============================================================================
-CORNER_CHIP_SIZE = int((CHIPLET_SIZE_x-FIELD_SAW-2*FIELD_PADDING)//2 + 2*FIELD_PADDING) # Size of corner chips in microns
-
 class CornerChip(m.Chip):
     def __init__(self, wafer, chipID, layer, defaults=None, **kwargs):
         # Temporarily override wafer chip dimensions so Chip gets the correct width/height.
@@ -435,67 +335,38 @@ class CornerChip(m.Chip):
         wafer.chipX = original_chip_x
         wafer.chipY = original_chip_y
         wafer.frame = original_frame
-        
+
         if defaults is not None:
             for d in defaults:
                 self.defaults[d] = defaults[d]
 
-        step = FIELD_SIZE + FIELD_SAW
-        mx = int((CORNER_CHIP_SIZE - 2 * FIELD_PADDING) / step)
-        my = int((CORNER_CHIP_SIZE - 2 * FIELD_PADDING) / step)
+        mx = int((CORNER_CHIP_SIZE - 2 * FIELD_PADDING) / FIELD_STEP)
+        my = int((CORNER_CHIP_SIZE - 2 * FIELD_PADDING) / FIELD_STEP)
         print(f"Corner chip size: {CORNER_CHIP_SIZE} microns")
         print(f"Fields per corner chip: mx={mx}, my={my} ({mx*my} total)")
-        
+
         # Center the field grid in the corner chip with step offset (same as SimpleChiplet)
-        offset_x = (CORNER_CHIP_SIZE - mx * step) / 2 + step / 2
-        offset_y = (CORNER_CHIP_SIZE - my * step) / 2 + step / 2
-        
+        offset_x = (CORNER_CHIP_SIZE - mx * FIELD_STEP) / 2 + FIELD_STEP / 2
+        offset_y = (CORNER_CHIP_SIZE - my * FIELD_STEP) / 2 + FIELD_STEP / 2
+
         for ix in range(mx):
             for iy in range(my):
-                cx = offset_x + ix * step
-                cy = offset_y + iy * step
-
-                # sweep parameters + label; strict=False because the corner
-                # chip grid may hold fewer tiles than the main chiplet
-                # (tile/param indices wrap around)
-                params, flabel = field_params(ix, iy, mx, my, strict=False)
-
-                # Field frame on 703/0 layer
-                self.add(dxf.rectangle(
-                    (cx - FIELD_SIZE/2, cy - FIELD_SIZE/2),
-                    FIELD_SIZE, FIELD_SIZE,
-                    layer=wafer.lyr(FRAME_LAYER)
-                ))
-
-                # Transmon3D with shunt (scaled to fit 500 micron field)
-                tpos = (cx - TMON_PAD_WIDTH/2, cy + TMON_SEPARATION/2)
-                Transmon3DWithShunt(self, tpos,
-                                    padw=TMON_PAD_WIDTH, padh=TMON_PAD_HEIGHT,
-                                    leadw=TMON_LEAD_WIDTH, leadh=TMON_LEAD_HEIGHT,
-                                    padradius=TMON_PAD_RADIUS,
-                                    separation=TMON_SEPARATION, shunt=True,
-                                    shunt_width=TMON_SHUNT_WIDTH, shunt_dist=TMON_SHUNT_DIST,
-                                    shunt_length=TMON_SHUNT_LENGTH, shunt_side='left', flipped=True,
-                                    tab=True, tab_shift_x=TMON_PAD_WIDTH/2 - TMON_LEAD_WIDTH/2,
-                                    layer=wafer.lyr(dose_layer(METAL_LAYER, params, 'pads_dose')))
-
-                # Leads and Dolan junction in the pad gap
-                JunctionWithLeads(self, tpos, params)
-
-                # field label in the bottom-left corner
-                self.add_chip_label(flabel,
-                                    (cx - FIELD_SIZE/2 + 50, cy - FIELD_SIZE/2 + 42),
-                                    height=22, layer='LABELS')
+                # strict=False: the corner chip grid may hold fewer tiles
+                # than the main chiplet (tile parameter values wrap around)
+                params, flabel = sweep.field(ix, iy, grid_nx=mx, grid_ny=my, strict=False)
+                draw_field(self, wafer,
+                           offset_x + ix * FIELD_STEP, offset_y + iy * FIELD_STEP,
+                           params, flabel)
 
         # sweep legend in the bottom margin
-        for k, line in enumerate(sweep_legend_lines()):
+        for k, line in enumerate(sweep.legend_lines()):
             self.add_chip_label(line, (CORNER_CHIP_SIZE/2, 400 - 110*k),
                                 height=70, layer='LABELS')
 
 
          # Markers at four corners of the chiplet (placed once, outside field loop)
         marker_size = 100  # marker size in microns
-        
+
         # Bottom-left
         MarkerCross(self, (FIELD_PADDING/2, FIELD_PADDING/2), (marker_size, marker_size), 5, layer='TiW_Mark')
         # Bottom-right
@@ -513,16 +384,12 @@ class CornerChip(m.Chip):
 
         # Add a test structure or marker to identify it
         #MarkerCross(self, (0, 0), (500, 500), 10, layer='Opt_Mark')
-     
 
 
-        
 # ===============================================================================
 # generate chiplets
 # ===============================================================================
 # Create and set the default chiplet
-#import time
-#cache_bust = str(int(time.time() * 1000) % 100000)
 default_chiplet = SimpleChiplet(w, '3DMM2_CHIPLET_DEFAULT', w.defaultLayer)
 w.setDefaultChip(default_chiplet)
 
@@ -534,7 +401,7 @@ if REUSE_IDENTICAL_CHIPS:
 else:
     for i in range(1, len(w.chips)):
         w.setChipBuffer(SimpleChiplet(w, f'3DMM2_CHIPLET{i}', w.defaultLayer).save(w), i)
-    
+
 # Save a sample chip DXF if we have enough chips
 if EXPORT_SAMPLE_CHIPLET_DXF and len(w.chips) > 1:
     w.chips[1].save(w, drawCopyDXF=True, dicingBorder=False)
@@ -572,7 +439,7 @@ else:
         insert_pt = w.chipSpace((adj_x, adj_y))
         if RENDER_FULL_WAFER:
             w.drawing.add(dxf.insert(corner_chip.ID, insert=insert_pt, layer=w.lyr(corner_chip.layer)))
-    
+
 # Now that all chips are saved in the blocks section, optionally write the full wafer DXF
 if RENDER_FULL_WAFER:
     w.populate()
