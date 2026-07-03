@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
+Created 2026
+
+@author: Agrim
+
 QubitLibExample: a 'qubit zoo' chip demonstrating the main functions in
 maskLib.qubitLib, one of each with a text label.
 

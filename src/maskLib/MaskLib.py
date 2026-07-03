@@ -3,6 +3,7 @@
 Created on Fri Jan  5 12:35:23 2018
 
 @author: sasha
+Edited by Agrim, 2026 (updated ezdxf font imports)
 """
 import math
 import os
@@ -22,7 +23,7 @@ from ezdxf.math import Matrix44
 # from ezdxf.gfxattribs import GfxAttribs
 from ezdxf.tools import text
 # from ezdxf.enums import MTextEntityAlignment
-#from ezdxf.tools.fonts import FontMeasurements, FontProperties
+# (ezdxf.tools.fonts was removed in ezdxf v1.x -- font tools now live in ezdxf.fonts.fonts)
 
 import math
 
@@ -535,9 +536,12 @@ class Wafer:
         
 import ezdxf
 from ezdxf.addons import text2path
-# from ezdxf.tools.fonts import 
-from ezdxf.fonts.font_face import FontFace as FontFace
-from maskLib.utilities import snap_to_grid  # <-- add this import
+# NOTE: ezdxf reorganized its font tools in v1.0 and later removed the old path:
+#   old (removed):  from ezdxf.tools.fonts import FontFace
+#   new:            from ezdxf.fonts.fonts import FontFace  (public API)
+# (ezdxf.fonts.font_face.FontFace also works but is the internal module path)
+from ezdxf.fonts.fonts import FontFace
+from maskLib.utilities import snap_to_grid
 
 class Chip:
     def __init__(self, wafer, chipID, layer, structures=None, defaults=None, FRAME_NAME='703/0', grid_size_small=.005, grid_size_large=.050,centerChip=True):

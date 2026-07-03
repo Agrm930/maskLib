@@ -3,6 +3,7 @@
 Created on Fri Mar 27 13:02:59 2020
 
 @author: sasha
+Edited by Agrim, 2026 (added tab_shift_x to Transmon3DWithShunt)
 
 Library for drawing standard junctions and other relevant components (contact tabs, etc)
 """

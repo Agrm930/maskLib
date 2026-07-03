@@ -1,7 +1,10 @@
+# Edited by Agrim, 2026 (fixed removed ezdxf import)
 import ezdxf
 from ezdxf.addons import text2path
-from ezdxf.tools.fonts import FontFace
-from dxfwrite import DXFEngine as dxf
+# NOTE: ezdxf reorganized its font tools in v1.0 and later removed the old path:
+#   old (removed):  from ezdxf.tools.fonts import FontFace
+#   new:            from ezdxf.fonts.fonts import FontFace
+from ezdxf.fonts.fonts import FontFace
 
 # Define the text and font
 text = "p"
@@ -20,19 +23,17 @@ doc = ezdxf.new('R2010')
 msp = doc.modelspace()
 
 # Create a block for the text
+# NOTE: this document is an ezdxf document, so the block must be created with
+# the ezdxf API (doc.blocks.new). The original code built a dxfwrite block
+# (dxf.block) and tried to add it here -- the two libraries' objects are not
+# interchangeable.
 block_name = "TEXT_BLOCK"
-text_block = dxf.block(block_name)
+text_block = doc.blocks.new(name=block_name)
 
-# Add the text paths to the block using the same polyline command as in maskLib.py
+# Add the text paths to the block as closed polylines
 for path in paths:
-    points = list(path.flattening(0.01))
-    # Ensure the path is closed by adding the starting point at the end
-    if points[0] != points[-1]:
-        points.append(points[0])
-    text_block.add(dxf.polyline(points, layer='TEXT', flags=1))  # flags=1 ensures the polyline is closed
-
-# Add the block to the drawing
-doc.blocks.add(text_block)
+    points = [(p.x, p.y) for p in path.flattening(0.01)]
+    text_block.add_lwpolyline(points, close=True, dxfattribs={'layer': 'TEXT'})
 
 # Add the block reference to the modelspace
 msp.add_blockref(block_name, insert=(0, 0))
