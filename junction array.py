@@ -36,6 +36,7 @@ GRID_NY = int((CHIPLET_SIZE_y - 2 * FIELD_PADDING) / FIELD_STEP)
 
 # corner chips (smaller chips placed at the wafer corners)
 CORNER_CHIP_SIZE = int((CHIPLET_SIZE_x-FIELD_SAW-2*FIELD_PADDING)//2 + 2*FIELD_PADDING)
+CORNER_GRID_N = int((CORNER_CHIP_SIZE - 2 * FIELD_PADDING) / FIELD_STEP)  # fields per side (20)
 
 FRAME_LAYER = '703/0'      # Layer for chip frame boundary
 METAL_LAYER = 'BASEMETAL'  # Layer for metal structures
@@ -247,23 +248,58 @@ w = m.Wafer(WAFER_NAME,'DXF/',CHIPLET_SIZE_x,CHIPLET_SIZE_y,padding=1500,waferDi
     # w.multiLayer: draw in multiple layers?
     # w.singleChipColumn: only make one column of chips?
 
-# base layers; per-dose layers (e.g. BRIDGE_400) are appended automatically
-# from the sweep configuration -- do not add them by hand
-BASE_LAYERS = [
-    ['BASEMETAL',4],
-    ['DICEBORDER',5],
-    ['Opt_Mark',3],
-    ['TiW_Mark',7],
-    ['703/0', 9],
-    ['LEADS',6],
-    ['SMALLFINGER',1],
-    ['BIGFINGER',8],
-    ['BRIDGE',2],
-    ['UNDERCUT',30],
-    ['SHIFT',40],
-    ['LABELS',11],
-    ]
-w.SetupLayers(BASE_LAYERS + [[name, 50 + k % 200] for k, name in enumerate(sweep.dose_layers())])
+# ------------------------------------------------------------------------------
+# Layers, grouped by fabrication role
+# ------------------------------------------------------------------------------
+# INACTIVE  -- DXF bookkeeping only, never fabricated: '0' and 'VIEWPORTS'
+#              (managed by dxfwrite; layer-0 content inside blocks inherits
+#              the chip's layer at insert time)
+# GUIDE     -- drawn for reference, written to no mask: field/chip frames on
+#              703/0, plus WAFER_FRAME (wafer outline circles, added
+#              automatically by w.init() because frame=True)
+# OPTICAL 1 -- first photolithography exposure
+# OPTICAL 2 -- second photolithography exposure
+#              (Opt_Mark alignment marks are shared by both optical steps)
+# EBEAM     -- electron-beam exposure: the junction structures; per-dose
+#              copies (e.g. BRIDGE_400) are auto-generated from the sweep
+#
+# NOTE: the first layer passed to SetupLayers becomes the wafer default
+# layer, so LAYERS_OPTICAL_1 (BASEMETAL) must stay first.
+
+LAYERS_GUIDE = [
+    ['703/0', 9],          # field + chip frame boundaries (light gray)
+]
+LAYERS_OPTICAL_1 = [
+    ['BASEMETAL', 5],      # transmon pads + shunts
+    ['DICEBORDER', 4],     # dicing saw guides
+    ['Opt_Mark', 3],       # optical alignment marks (also used in step 2)
+]
+LAYERS_OPTICAL_2 = [
+    ['TiW_Mark', 6],       # TiW marker crosses
+    ['LABELS', 2],         # field labels + sweep legend
+]
+LAYERS_EBEAM = [
+    ['LEADS', 1],          # base (undosed) ebeam layers; swept structures
+    ['SMALLFINGER', 30],   # move to the per-dose copies below
+    ['BIGFINGER', 32],
+    ['BRIDGE', 34],
+    ['UNDERCUT', 36],
+    ['SHIFT', 38],
+]
+# per-dose ebeam layers from the sweep (e.g. BRIDGE_400 ... SMALLFINGER_1500)
+LAYERS_EBEAM_DOSES = [[name, 50 + k % 200] for k, name in enumerate(sweep.dose_layers())]
+
+w.SetupLayers(LAYERS_OPTICAL_1 + LAYERS_OPTICAL_2 + LAYERS_GUIDE
+              + LAYERS_EBEAM + LAYERS_EBEAM_DOSES)
+
+# (index l[0]: SetupLayers appends a layer number to each entry in place)
+print('Layer manifest by fabrication role:')
+print('  inactive (never written): 0, VIEWPORTS')
+print('  guide    (not written):   WAFER_FRAME, ' + ', '.join(l[0] for l in LAYERS_GUIDE))
+print('  optical 1: ' + ', '.join(l[0] for l in LAYERS_OPTICAL_1))
+print('  optical 2: ' + ', '.join(l[0] for l in LAYERS_OPTICAL_2) + '  (+ Opt_Mark alignment)')
+print('  ebeam:     ' + ', '.join(l[0] for l in LAYERS_EBEAM)
+      + ' + %d per-dose layers' % len(LAYERS_EBEAM_DOSES))
 
 #initialize the wafer (remember to finalize any wafer properties like layers before initializing!)
 w.init()
@@ -349,8 +385,7 @@ class CornerChip11000um(m.Chip):
             for d in defaults:
                 self.defaults[d] = defaults[d]
 
-        mx = int((CORNER_CHIP_SIZE - 2 * FIELD_PADDING) / FIELD_STEP)
-        my = int((CORNER_CHIP_SIZE - 2 * FIELD_PADDING) / FIELD_STEP)
+        mx = my = CORNER_GRID_N
         print(f"Corner chip size: {CORNER_CHIP_SIZE} microns")
         print(f"Fields per corner chip: mx={mx}, my={my} ({mx*my} total)")
 
@@ -399,7 +434,9 @@ class CornerChip11000um(m.Chip):
 # generate chiplets
 # ===============================================================================
 # Create and set the default chiplet
-default_chiplet = Chiplet21000um(w, f'CHIPLET_{CHIPLET_SIZE_x}um', w.defaultLayer)
+# chip IDs carry each chip's own size and field grid (the wafer-name prefix
+# describes the main chiplet design; this suffix describes the chip itself)
+default_chiplet = Chiplet21000um(w, f'CHIPLET_{CHIPLET_SIZE_x}um_{GRID_NX}x{GRID_NY}', w.defaultLayer)
 w.setDefaultChip(default_chiplet)
 
 
@@ -409,7 +446,7 @@ if REUSE_IDENTICAL_CHIPS:
         w.setChipBuffer(default_chiplet, i)
 else:
     for i in range(1, len(w.chips)):
-        w.setChipBuffer(Chiplet21000um(w, f'CHIPLET_{CHIPLET_SIZE_x}um_{i}', w.defaultLayer).save(w), i)
+        w.setChipBuffer(Chiplet21000um(w, f'CHIPLET_{CHIPLET_SIZE_x}um_{GRID_NX}x{GRID_NY}_{i}', w.defaultLayer).save(w), i)
 
 # Save a sample chip DXF if we have enough chips
 if EXPORT_SAMPLE_CHIPLET_DXF and len(w.chips) > 1:
@@ -428,7 +465,7 @@ corner_positions = [
 ]
 
 if REUSE_IDENTICAL_CHIPS:
-    corner_chip = CornerChip11000um(w, f'CORNER_{CORNER_CHIP_SIZE}um', w.defaultLayer)
+    corner_chip = CornerChip11000um(w, f'CORNER_{CORNER_CHIP_SIZE}um_{CORNER_GRID_N}x{CORNER_GRID_N}', w.defaultLayer)
     corner_chip.save(w, drawCopyDXF=EXPORT_CORNER_CHIP_DXF, dicingBorder=False)
 
     if RENDER_FULL_WAFER:
@@ -440,7 +477,7 @@ if REUSE_IDENTICAL_CHIPS:
             w.drawing.add(dxf.insert(corner_chip.ID, insert=insert_pt, layer=w.lyr(corner_chip.layer)))
 else:
     for idx, (cx, cy) in enumerate(corner_positions):
-        corner_chip = CornerChip11000um(w, f'CORNER_{CORNER_CHIP_SIZE}um_{idx}', w.defaultLayer)
+        corner_chip = CornerChip11000um(w, f'CORNER_{CORNER_CHIP_SIZE}um_{CORNER_GRID_N}x{CORNER_GRID_N}_{idx}', w.defaultLayer)
         corner_chip.save(w, drawCopyDXF=EXPORT_CORNER_CHIP_DXF and idx == 0, dicingBorder=False)
         # Adjust insertion point to compensate for CORNER_CHIP_SIZE/2 shift
         adj_x = cx - CORNER_CHIP_SIZE / 2 - FIELD_SIZE
