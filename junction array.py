@@ -11,7 +11,7 @@ coordinates, 3D parameter sweep via maskLib.arrayLib)
 import numpy as np
 
 import maskLib.MaskLib as m
-from maskLib.arrayLib import Sweep3D, dose_layer
+from maskLib.arrayLib import Sweep3D, dose_layer, export_ldt
 from maskLib.junctionLib import setupJunctionLayers, JcalcTabDims, JContact_slot, Transmon3DWithShunt
 from maskLib.fluxoniumLib import smallJJ, leads_for_tmon_dosearray_custom
 from maskLib.Entities import SolidPline, RoundRect
@@ -146,6 +146,18 @@ DOSE_PARAMS = {
     'bridge_dose':      'BRIDGE',
     'undercut_dose':    'UNDERCUT',
     'shift_dose':       'SHIFT',
+}
+
+# doses for ebeam layers whose dose is NOT being swept -- written to the
+# Elionix .ldt dose table alongside the swept per-dose layers. Families that
+# ARE swept (e.g. BRIDGE while bridge_dose is a sweep axis) are ignored here.
+EBEAM_BASE_DOSES = {
+    'LEADS':       1200,
+    'SMALLFINGER': 1000,
+    'BIGFINGER':   1000,
+    'BRIDGE':      500,
+    'UNDERCUT':    200,
+    'SHIFT':       400,
 }
 
 sweep = Sweep3D(GRID_NX, GRID_NY, TILE_NX, TILE_NY,
@@ -472,6 +484,17 @@ class CornerChip11000um(m.Chip):
 # chip IDs carry each chip's own size and field grid (the wafer-name prefix
 # describes the main chiplet design; this suffix describes the chip itself)
 
+def export_ldt_for(chip):
+    '''Elionix layer dose table for one chip's ebeam job, named to match its
+    DXF. Layer numbers come from the wafer layer table PLUS ONE: the DXF->GDS
+    converter numbers layers 1-based (verified against a converted GDS:
+    BASEMETAL table index 1 -> GDS layer 2, LEADS 7 -> 8, SHIFT 12 -> 13).
+    Doses come from the sweep values plus EBEAM_BASE_DOSES for unswept
+    families.'''
+    path = w.path + w.fileName + '_' + chip.ID + '.ldt'
+    export_ldt(path, sweep.ldt_entries(lambda name: w.layerNums[name] + 1, EBEAM_BASE_DOSES))
+    print('Elionix dose table saved to', path)
+
 # --- main chiplet: needed for the full wafer, or when it is the requested chip
 if OPTICAL_ONLY or not GENERATE_CORNER_CHIP:
     default_chiplet = Chiplet21000um(w, f'CHIPLET_{CHIPLET_SIZE_x}um_{GRID_NX}x{GRID_NY}', w.defaultLayer)
@@ -485,9 +508,10 @@ if OPTICAL_ONLY or not GENERATE_CORNER_CHIP:
         for i in range(1, len(w.chips)):
             w.setChipBuffer(Chiplet21000um(w, f'CHIPLET_{CHIPLET_SIZE_x}um_{GRID_NX}x{GRID_NY}_{i}', w.defaultLayer).save(w), i)
 
-    # Save a standalone chiplet DXF if requested
+    # Save a standalone chiplet DXF + its ebeam dose table if requested
     if EXPORT_SAMPLE_CHIPLET_DXF and len(w.chips) > 1:
         w.chips[1].save(w, drawCopyDXF=True, dicingBorder=False)
+        export_ldt_for(w.chips[1])
 
 # --- corner chips: needed for the full wafer, or when they are the requested chip
 if OPTICAL_ONLY or GENERATE_CORNER_CHIP:
@@ -505,6 +529,8 @@ if OPTICAL_ONLY or GENERATE_CORNER_CHIP:
     if REUSE_IDENTICAL_CHIPS:
         corner_chip = CornerChip11000um(w, f'CORNER_{CORNER_CHIP_SIZE}um_{CORNER_GRID_N}x{CORNER_GRID_N}', w.defaultLayer)
         corner_chip.save(w, drawCopyDXF=EXPORT_CORNER_CHIP_DXF, dicingBorder=False)
+        if EXPORT_CORNER_CHIP_DXF:
+            export_ldt_for(corner_chip)
 
         if RENDER_FULL_WAFER:
             for cx, cy in corner_positions:
@@ -517,6 +543,8 @@ if OPTICAL_ONLY or GENERATE_CORNER_CHIP:
         for idx, (cx, cy) in enumerate(corner_positions):
             corner_chip = CornerChip11000um(w, f'CORNER_{CORNER_CHIP_SIZE}um_{CORNER_GRID_N}x{CORNER_GRID_N}_{idx}', w.defaultLayer)
             corner_chip.save(w, drawCopyDXF=EXPORT_CORNER_CHIP_DXF and idx == 0, dicingBorder=False)
+            if EXPORT_CORNER_CHIP_DXF and idx == 0:
+                export_ldt_for(corner_chip)
             # Adjust insertion point to compensate for CORNER_CHIP_SIZE/2 shift
             adj_x = cx - CORNER_CHIP_SIZE / 2 - FIELD_SIZE
             adj_y = cy - CORNER_CHIP_SIZE / 2 - FIELD_SIZE

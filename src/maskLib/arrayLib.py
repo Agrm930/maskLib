@@ -111,6 +111,30 @@ def dose_layer(base, params, dose_name):
     return base if v is None else '%s_%s' % (base, fmt_value(v))
 
 
+def export_ldt(path, entries):
+    '''
+    Write an Elionix layer dose table (.ldt) for ebeam lithography.
+
+    entries: iterable of (layer_number, dose) pairs. layer_number is the
+    numeric layer the DXF layer becomes after GDS conversion (= its index
+    in the wafer layer table, wafer.layerNums[name]). The dose is written
+    divided by 1000 with 3 decimals, per the Elionix format:
+
+        Dosetable V1.0
+        Dose Assignment by Layer
+        (2 ,   0.400)
+        ...
+
+    Returns the path written.
+    '''
+    with open(path, 'w') as f:
+        f.write('\nDosetable V1.0\nDose Assignment by Layer\n')
+        for num, dose in sorted(entries):
+            f.write('(%d ,   %.3f)\n' % (num, dose / 1000.0))
+        f.write('\n')
+    return path
+
+
 class Sweep3D:
     '''
     3D parameter sweep over a tiled field grid (see module docstring).
@@ -210,6 +234,33 @@ class Sweep3D:
                         if lyr not in out:
                             out.append(lyr)
         return out
+
+    def ldt_entries(self, layer_number, base_doses=None):
+        '''
+        (layer_number, dose) pairs for an Elionix dose table (see export_ldt).
+
+        layer_number -- function mapping a layer NAME to its numeric layer,
+                        e.g.  lambda name: wafer.layerNums[name]
+        base_doses   -- {LAYER_FAMILY: dose} for ebeam layers whose dose is
+                        NOT being swept (e.g. {'LEADS': 1200}). Families that
+                        ARE swept are ignored here -- they get one entry per
+                        auto-generated dose layer instead, with the dose
+                        taken straight from the layer's own sweep value.
+        '''
+        entries = []
+        swept_families = set()
+        for axname in ('col', 'row', 'tile'):
+            for pname, vals in self.axes[axname].items():
+                if pname in self.dose_params:
+                    fam = self.dose_params[pname]
+                    swept_families.add(fam)
+                    for v in vals:
+                        entries.append((layer_number('%s_%s' % (fam, fmt_value(v))),
+                                        float(v)))
+        for fam, dose in (base_doses or {}).items():
+            if fam not in swept_families:
+                entries.append((layer_number(fam), float(dose)))
+        return entries
 
     # ---- reporting -------------------------------------------------------
 
