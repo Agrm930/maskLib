@@ -133,6 +133,15 @@ sweep = Sweep3D(GRID_NX, GRID_NY, TILE_NX, TILE_NY,
                 geometry_params=GEOMETRY_PARAMS, dose_params=DOSE_PARAMS)
 sweep.print_summary()
 
+# Output file names are built from the design parameters, so the DXF and
+# xlsx names always describe what was generated,
+# e.g. 'TmonJJArray_21mm_40x40_tile10x20_SizeDoseDose'
+DESIGN_NAME = 'TmonJJArray'
+WAFER_NAME = '%s_%gmm_%dx%d_tile%dx%d_%s' % (
+    DESIGN_NAME, CHIPLET_SIZE_x / 1000, GRID_NX, GRID_NY,
+    TILE_NX, TILE_NY, sweep.sweep_type())
+print('Output name:', WAFER_NAME)
+
 # ===============================================================================
 # 4) Drawing functions
 # ===============================================================================
@@ -230,7 +239,7 @@ def draw_field(chip, wafer, cx, cy, params, flabel):
 # wafer setup
 # ===============================================================================
 
-w = m.Wafer('shunted probe array','DXF/',CHIPLET_SIZE_x,CHIPLET_SIZE_y,padding=1500,waferDiameter=m.waferDiameters['4in'],sawWidth=500,singleChipColumn=False, centerChip=False, frame=True, markers=False
+w = m.Wafer(WAFER_NAME,'DXF/',CHIPLET_SIZE_x,CHIPLET_SIZE_y,padding=1500,waferDiameter=m.waferDiameters['4in'],sawWidth=500,singleChipColumn=False, centerChip=False, frame=True, markers=False
 )
     #set wafer properties
     # w.frame: draw frame layer?
@@ -269,9 +278,9 @@ doMirrored(MarkerCross, w, (0,45000),(500,500), 20,layer='Opt_Mark',mirrorX=True
 doMirrored(MarkerCross, w, (45000,0),(500,500), 20,layer='Opt_Mark',mirrorX=True,mirrorY=True)
 
 # ===============================================================================
-# chiplet class definition
+# chiplet class definition (named for its size: 21000 um = 21 mm square)
 # ===============================================================================
-class SimpleChiplet(m.Chip):
+class Chiplet21000um(m.Chip):
     def __init__(self, wafer, chipID, layer, defaults=None, **kwargs):
         # centerChip=False: chip.add() applies no origin shift, so all entity
         # types share one corner-based coordinate system (no +chipsize/2 hacks)
@@ -318,9 +327,9 @@ class SimpleChiplet(m.Chip):
         MarkerCross(self, (CHIPLET_SIZE_x - FIELD_PADDING/2, CHIPLET_SIZE_y - FIELD_PADDING/2), (marker_size, marker_size), 5, layer='TiW_Mark')
 
 # ===============================================================================
-# Corner chip class definition (smaller chips for wafer corners)
+# Corner chip class definition (11000 um square chips for the wafer corners)
 # ===============================================================================
-class CornerChip(m.Chip):
+class CornerChip11000um(m.Chip):
     def __init__(self, wafer, chipID, layer, defaults=None, **kwargs):
         # Temporarily override wafer chip dimensions so Chip gets the correct width/height.
         original_frame = wafer.frame
@@ -390,7 +399,7 @@ class CornerChip(m.Chip):
 # generate chiplets
 # ===============================================================================
 # Create and set the default chiplet
-default_chiplet = SimpleChiplet(w, '3DMM2_CHIPLET_DEFAULT', w.defaultLayer)
+default_chiplet = Chiplet21000um(w, f'CHIPLET_{CHIPLET_SIZE_x}um', w.defaultLayer)
 w.setDefaultChip(default_chiplet)
 
 
@@ -400,7 +409,7 @@ if REUSE_IDENTICAL_CHIPS:
         w.setChipBuffer(default_chiplet, i)
 else:
     for i in range(1, len(w.chips)):
-        w.setChipBuffer(SimpleChiplet(w, f'3DMM2_CHIPLET{i}', w.defaultLayer).save(w), i)
+        w.setChipBuffer(Chiplet21000um(w, f'CHIPLET_{CHIPLET_SIZE_x}um_{i}', w.defaultLayer).save(w), i)
 
 # Save a sample chip DXF if we have enough chips
 if EXPORT_SAMPLE_CHIPLET_DXF and len(w.chips) > 1:
@@ -419,7 +428,7 @@ corner_positions = [
 ]
 
 if REUSE_IDENTICAL_CHIPS:
-    corner_chip = CornerChip(w, 'CORNER_CHIP_TEMPLATE', w.defaultLayer)
+    corner_chip = CornerChip11000um(w, f'CORNER_{CORNER_CHIP_SIZE}um', w.defaultLayer)
     corner_chip.save(w, drawCopyDXF=EXPORT_CORNER_CHIP_DXF, dicingBorder=False)
 
     if RENDER_FULL_WAFER:
@@ -431,7 +440,7 @@ if REUSE_IDENTICAL_CHIPS:
             w.drawing.add(dxf.insert(corner_chip.ID, insert=insert_pt, layer=w.lyr(corner_chip.layer)))
 else:
     for idx, (cx, cy) in enumerate(corner_positions):
-        corner_chip = CornerChip(w, f'CORNER_CHIP_{idx}', w.defaultLayer)
+        corner_chip = CornerChip11000um(w, f'CORNER_{CORNER_CHIP_SIZE}um_{idx}', w.defaultLayer)
         corner_chip.save(w, drawCopyDXF=EXPORT_CORNER_CHIP_DXF and idx == 0, dicingBorder=False)
         # Adjust insertion point to compensate for CORNER_CHIP_SIZE/2 shift
         adj_x = cx - CORNER_CHIP_SIZE / 2 - FIELD_SIZE
