@@ -3,7 +3,7 @@
 Created on Fri Jan  5 12:35:23 2018
 
 @author: sasha
-Edited by Agrim, 2026 (updated ezdxf font imports)
+Edited by Agrim, 2026 (updated ezdxf font imports; moved deprecated functions to MaskLib_old.py)
 """
 import math
 import os
@@ -68,76 +68,16 @@ from dxfwrite import DXFEngine as engine
 waferDiameters = {'2in':50800,'3in':76200,'4in':101600,'6in':152400}
 sawWidths = {'4A':101.6,'8A':203.2}
 
-# ===============================================================================
-#  MARKER FUNCTIONS (Deprecated- use functions from masklib.markerLib)
-# ===============================================================================
-#Define Marker Function for numbers 0-9
-#High visibility markers composed of a grid of six squares
-def HiVisMarker09(dwg,xpos,ypos,number,width,bg=None,**kwargs):
-    #>>>>>>>> Deprecated, use markerLib.HiVisMarker09 instead <<<<<<<<<<
-    shapes = [[],  [[0,0]],  [[0,0],[1,1]],    [[0,0],[1,1],[0,1]],  [[0,0],[0,1],[2,0],[2,1]],
-             [[0,1],[1,0],[2,1]],  [[0,0],[1,0],[2,0],[1,1]],   [[0,0],[0,1],[1,0],[1,1],[2,1]], [[0,0],[0,1],[1,0],[1,1]],
-             [[0,0],[1,0],[1,1],[2,1]]]
-    number = number % len(shapes)
-    for v in shapes[number]:
-        dwg.add(dxf.rectangle((xpos+v[0]*width,ypos+v[1]*width),width,width,bgcolor=bg,**kwargs))
-   
-# ===============================================================================
-#  UTILITY FUNCTIONS  (Deprecated - use functions from masklib.utilities)
-# ===============================================================================
-def curveAB(a,b,clockwise,angleDeg,ptDensity):
-    #>>>>>>>> Deprecated, use utilities.curveAB instead <<<<<<<<<<
-    
-    #generate a segmented curve from A to B specified by angle. Point density = #pts / revolution
-    #return list of points
-    angle = math.radians(angleDeg)
-    segments = int(angle/(2*math.pi) *ptDensity)
-    center = vadd(midpoint(a,b),vmul_scalar(rotate_2d(vsub(b,a),-clockwise*math.pi/2),0.5/math.tan(angle/2)))
-    points = []
-    for i in range(segments+1):
-        points.append(vadd(center,rotate_2d(vsub(a,center),-clockwise*i*angle/segments)))
-    return points
-
-def corner(vertex,quadrant,clockwise,L,ptDensity):
-    #>>>>>>>> Deprecated, use utilities.cornerRound instead <<<<<<<<<<
-    
-    #quadrant corresponds to quadrants 1-4
-    #generate a curve to replace the vertex
-    ptA = vadd(vertex,rotate_2d((0,L),quadrant * math.pi/2))
-    ptB = vadd(vertex,rotate_2d((0,L),(quadrant+1) * math.pi/2))
-
-    return clockwise>0 and curveAB(ptA,ptB,1,90,ptDensity) or curveAB(ptB,ptA,-1,90,ptDensity)
-
-def transformedQuadrants(UD=1,LR=1):
-    #>>>>>>>> Deprecated, use utilities.transformedQuadrants instead <<<<<<<<<<
-    
-    #return quadrant list with up/down left/right flips applied
-    return UD==1 and (LR==1 and [0,1,2,3,4] or [0,2,1,4,3]) or (LR==1 and [0,4,3,2,1] or [0,3,4,1,2])
-
-def skewRect(corner,width,height,offset,newLength,edge=1,**kwargs):
-    #>>>>>>>> Deprecated, use Entities.SkewRect instead <<<<<<<<<<
-    
-    #quadrangle drawn counterclockwise starting from bottom left
-    #edges are indexed 0-3 correspondingly
-    #edge 1 is default (east edge )
-    pts =  [(corner[0],corner[1]),(corner[0]+width,corner[1]),
-            (corner[0]+width,corner[1]+height),(corner[0],corner[1]+height)]
-    direction = edge//2 > 0 and -1 or 1
-    if(edge%2==0): #horizontal
-        delta = 0.5*(newLength-width)*direction
-        pts[edge] = (pts[edge][0]+offset[0]-delta,pts[edge][1]+offset[1])
-        pts[(edge+1)%4] = (pts[(edge+1)%4][0]+offset[0]+delta,pts[(edge+1)%4][1]+offset[1])
-    else: #vertical
-        delta = 0.5*(newLength-height)*direction
-        pts[edge] = (pts[edge][0]+offset[0],pts[edge][1]+offset[1]-delta)
-        pts[(edge+1)%4] = (pts[(edge+1)%4][0]+offset[0],pts[(edge+1)%4][1]+offset[1]+delta)
-        
-    taper = dxf.polyline(points = pts,flags=0,**kwargs)
-    taper.close()
-    return taper
+# NOTE: the deprecated module-level functions that used to live here
+# (HiVisMarker09, curveAB, corner, transformedQuadrants, skewRect) were
+# removed in 2026. Use markerLib.HiVisMarker09, utilities.curveAB,
+# utilities.cornerRound, utilities.transformedQuadrants, and
+# Entities.SkewRect instead (argument conventions differ slightly -- see
+# each function's docstring). The old versions are preserved in
+# MaskLib_old.py if you need to reference them.
 
 # ===============================================================================
-#  WAFER CLASS  
+#  WAFER CLASS
 #       master class designed to handle all layers, main dxf drawing and stores chips
 # ===============================================================================
 class Wafer:
@@ -452,6 +392,9 @@ class Wafer:
     
     #define high visibility markers as blocks '00' - '09'
     def defineHiVisMarker09(self,width,layer):
+        # deferred import: markerLib imports MaskLib, so a top-level import
+        # here would be circular
+        from maskLib.markerLib import HiVisMarker09
         for i in range(10):
             num = dxf.block('0'+str(i))
             HiVisMarker09(num,0,0,i,width,self.bg(layer))

@@ -131,9 +131,11 @@ JJ_UNDERCUT = 0.2            # Undercut width in microns
 # on, see DOSE_PARAMS). Dose layers like BRIDGE_400 are generated
 # automatically -- never add them to SetupLayers by hand.
 #
-# Every field gets a corner label like '3B7' (tile 3, row B, column 7); the
+# Every field gets a corner label like 'A0103' (chip/tile A, column 01,
+# row 03) -- letter = tile, then two digits column, two digits row. The
 # label -> parameter mapping is drawn as a legend in the chip margin and
-# saved to a CSV next to the DXF output.
+# saved to a two-sheet Excel workbook next to the DXF output (sheet 1:
+# parameter table, sheet 2: a minimap of labels laid out like the chip).
 
 TILE_NX = 10   # tile size in fields; must evenly divide the chiplet field grid
 TILE_NY = 20
@@ -149,7 +151,7 @@ SWEEP_TILE = {
     'smallfinger_dose': np.array([800, 900, 1000, 1100, 1200, 1300, 1400, 1500]),
 }
 
-EXPORT_SWEEP_CSV = True   # write <wafer>_sweep_map.csv mapping labels -> params
+EXPORT_SWEEP_MAP = True   # write <wafer>_sweep_map.xlsx (params table + minimap)
 
 # which JJ geometry kwarg each geometry parameter controls
 GEOMETRY_PARAMS = {
@@ -223,9 +225,9 @@ def field_params(ix, iy, grid_nx, grid_ny, strict=True):
     '''
     Sweep parameters and label for field (ix, iy) of a grid_nx x grid_ny grid.
     Returns (params, label): params is {parameter_name: value}, label is e.g.
-    '3B7' = tile 3, row B, column 7. With strict=True the tile must fill the
-    grid evenly (use strict=False for secondary chips like the corner chips,
-    where tile/param indices simply wrap around).
+    'A0103' = chip/tile A, column 01, row 03. With strict=True the tile must
+    fill the grid evenly (use strict=False for secondary chips like the
+    corner chips, where tile/param indices simply wrap around).
     '''
     if strict:
         assert grid_nx % TILE_NX == 0 and grid_ny % TILE_NY == 0, (
@@ -240,7 +242,7 @@ def field_params(ix, iy, grid_nx, grid_ny, strict=True):
             params[name] = vals[idx]
     for name, vals in SWEEP_TILE.items():
         params[name] = vals[tile % len(vals)]
-    return params, '%d%s%d' % (tile, index_letter(tj), ti)
+    return params, '%s%02d%02d' % (index_letter(tile), ti, tj)
 
 
 def sweep_legend_lines():
@@ -368,29 +370,38 @@ class SimpleChiplet(m.Chip):
                 # Leads and Dolan junction in the pad gap
                 JunctionWithLeads(self, tpos, params)
 
-                # field label (tile + row letter + column number) in the
+                # field label (tile letter + column + row, e.g. A0103) in the
                 # bottom-left corner, clear of the pads and shunt
                 self.add_chip_label(flabel,
                                     (cx - FIELD_SIZE/2 + 50, cy - FIELD_SIZE/2 + 42),
-                                    height=26, layer='LABELS')
+                                    height=22, layer='LABELS')
 
         # sweep legend in the bottom margin, below the field grid
         for k, line in enumerate(sweep_legend_lines()):
             self.add_chip_label(line, (CHIPLET_SIZE_x/2, 400 - 110*k),
                                 height=70, layer='LABELS')
 
-        # full label -> parameters table, for the lab notebook
-        if EXPORT_SWEEP_CSV:
+        # sweep workbook for the lab notebook: sheet 1 is the full
+        # label -> parameters table, sheet 2 is a minimap -- labels laid out
+        # in cells matching their position on the chip (top row = top of chip)
+        if EXPORT_SWEEP_MAP:
+            from openpyxl import Workbook
             pnames = sorted({*SWEEP_COL, *SWEEP_ROW, *SWEEP_TILE})
-            csv_path = wafer.path + wafer.fileName + '_sweep_map.csv'
-            with open(csv_path, 'w') as f:
-                f.write('label,ix,iy,' + ','.join(pnames) + '\n')
-                for ix in range(nx):
-                    for iy in range(ny):
-                        params, flabel = field_params(ix, iy, nx, ny)
-                        f.write('%s,%d,%d,' % (flabel, ix, iy)
-                                + ','.join(fmt_value(params[p]) for p in pnames) + '\n')
-            print('Sweep map saved to', csv_path)
+            wb = Workbook()
+            ws = wb.active
+            ws.title = 'parameters'
+            ws.append(['label', 'ix', 'iy'] + pnames)
+            for ix in range(nx):
+                for iy in range(ny):
+                    params, flabel = field_params(ix, iy, nx, ny)
+                    ws.append([flabel, ix, iy] + [float(params[p]) for p in pnames])
+            wsmap = wb.create_sheet('map')
+            wsmap.append(['iy\\ix'] + list(range(nx)))
+            for iy in reversed(range(ny)):
+                wsmap.append([iy] + [field_params(ix, iy, nx, ny)[1] for ix in range(nx)])
+            xlsx_path = wafer.path + wafer.fileName + '_sweep_map.xlsx'
+            wb.save(xlsx_path)
+            print('Sweep map saved to', xlsx_path)
 
         # Markers at four corners of the chiplet (placed once, outside field loop)
         marker_size = 100  # marker size in microns
@@ -474,7 +485,7 @@ class CornerChip(m.Chip):
                 # field label in the bottom-left corner
                 self.add_chip_label(flabel,
                                     (cx - FIELD_SIZE/2 + 50, cy - FIELD_SIZE/2 + 42),
-                                    height=26, layer='LABELS')
+                                    height=22, layer='LABELS')
 
         # sweep legend in the bottom margin
         for k, line in enumerate(sweep_legend_lines()):

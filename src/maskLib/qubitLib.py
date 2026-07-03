@@ -21,18 +21,9 @@ from maskLib.utilities import kwargStrip, cornerRound
 
 
 
-# ===============================================================================
-# global functions to setup global variables in an arbitrary wafer object
-# ===============================================================================
-
-def setupXORlayer(wafer,XLAYER='XOR',xcolor=6):
-    '''
-    >>>>>>>>>>>>>>> Deprecated! Use wafer.setupXORlayer instead <<<<<<<<<<<<<<<<<<
-    Sets a layer for XOR operations on all other layers. 
-    OUT = ( LAYER1 or LAYER2 ... or LAYERN ) xor XLAYER 
-    '''
-    wafer.XLAYER=XLAYER
-    wafer.addLayer(XLAYER, xcolor)
+# NOTE: the deprecated module-level setupXORlayer() was removed in 2026 --
+# use wafer.setupXORlayer() instead (the old version is preserved in
+# qubitLib_old.py).
 
 # ===============================================================================
 # 3D transmon qubit functions (composite entities)
