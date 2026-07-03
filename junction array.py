@@ -11,158 +11,13 @@ Created on Thu Jun 17 13:52:03 2021
 import numpy as np
 
 import maskLib.MaskLib as m
-from maskLib.junctionLib import setupJunctionLayers, JcalcTabDims, JContact_slot
+from maskLib.junctionLib import setupJunctionLayers, JcalcTabDims, JContact_slot, Transmon3DWithShunt
 from maskLib.fluxoniumLib import smallJJ, leads_for_tmon_dosearray_custom
 from maskLib.Entities import SolidPline, RoundRect
 from maskLib.markerLib import MarkerSquare, MarkerCross
 from maskLib.utilities import doMirrored, cornerRound
 from dxfwrite import DXFEngine as dxf
 from dxfwrite import const
-
-
-def Transmon3DWithShunt(chip, pos, padw=1500, padh=750, padw2=None, padh2=None, leadw=100, leadw2=None, leadh=2000, leadh2=None, separation=200, padradius=20,
-                        tab=False, tab_gapw=3, tab_gapl=0.5, tab_tabw=2, tab_tabl=0.5, tab_taboffs=-0.5, tab_r_out=1.5, tab_r_ins=1.5,
-                        tab_offset_x=0, tab_offset_y=0, tab_shift_x=0,
-                        tabShoulder=False, tabShoulderWidth=30, tabShoulderLength=80, tabShoulderRadius=None,
-                        flipped=False, rotation=0, bgcolor=None, shunt=False, shunt_width=10, shunt_dist=150, shunt_length=400, shunt_side='left', **kwargs):
-    '''
-    Local copy from junctionLib so this script can be edited independently.
-    '''
-
-    def struct():
-        if isinstance(pos, m.Structure):
-            return pos
-        elif isinstance(pos, tuple):
-            return m.Structure(chip, start=pos, direction=rotation)
-        else:
-            return chip.structure(pos)
-
-    padstart = struct().start
-
-    if padw2 is None:
-        padw2 = padw
-    if padh2 is None:
-        padh2 = padh
-    if leadw2 is None:
-        leadw2 = leadw
-    if leadh2 is None:
-        leadh2 = leadh
-
-    if flipped:
-        tab_shift_x = tab_shift_x - 10
-        toppad = [
-            padstart,
-            (padstart[0] + padw, padstart[1]),
-            (padstart[0] + padw, padstart[1] + padh),
-            (padstart[0], padstart[1] + padh),
-            padstart
-        ]
-
-        botpad = [
-            (padstart[0], padstart[1] - separation),
-            (padstart[0], padstart[1] - separation - padh2),
-            (padstart[0] + padw2, padstart[1] - separation - padh2),
-            (padstart[0] + padw2, padstart[1] - separation),
-            (padstart[0], padstart[1] - separation)
-        ]
-
-        radius = padradius
-        p1_top = cornerRound(toppad[0], 3, radius)
-        p2_top = cornerRound(toppad[1], 4, radius)
-        p3_top = cornerRound(toppad[2], 1, radius)
-        p4_top = cornerRound(toppad[3], 2, radius)
-        toppad_fillet = p4_top + p3_top + p2_top + p1_top
-
-        p1_bot = cornerRound(botpad[0], 2, radius)
-        p2_bot = cornerRound(botpad[1], 3, radius)
-        p3_bot = cornerRound(botpad[2], 4, radius)
-        p4_bot = cornerRound(botpad[3], 1, radius)
-        botpad_fillet = p4_bot + p3_bot + p2_bot + p1_bot
-
-        if tab:
-            slotposadjust = JcalcTabDims(chip, struct(), gapw=tab_gapw, gapl=tab_gapl, tabw=tab_tabw, tabl=tab_tabl, taboffs=tab_taboffs, r_out=tab_r_out, r_ins=tab_r_ins, absoluteDimensions=False, stemw=None, steml=None, **kwargs)
-            topslotx = padstart[0] + leadw/2 + tab_shift_x
-            topslotpos = (topslotx, padstart[1] + slotposadjust[1])
-            slot_points_top = [
-                (topslotx + slotposadjust[0], padstart[1]),
-                (topslotx + slotposadjust[0], padstart[1] + slotposadjust[1]),
-                (topslotx - slotposadjust[0], padstart[1] + slotposadjust[1]),
-                (topslotx - slotposadjust[0], padstart[1])
-            ]
-            botslotx = padstart[0] + leadw2/2 + tab_shift_x
-            botslotpos = (botslotx, padstart[1] - separation)
-            slot_points_bot = [
-                (botslotx - slotposadjust[0], padstart[1] - separation),
-                (botslotx - slotposadjust[0], padstart[1] - separation - slotposadjust[1]),
-                (botslotx + slotposadjust[0], padstart[1] - separation - slotposadjust[1]),
-                (botslotx + slotposadjust[0], padstart[1] - separation)
-            ]
-
-        if shunt:
-            if shunt_side == 'left':
-                shunt_start_x = padstart[0]
-            else:
-                shunt_start_x = padstart[0] + padw
-
-            shunt_start = (shunt_start_x, padstart[1] - separation / 2 - shunt_length / 2)
-            shunt_end = (shunt_start_x, padstart[1] - separation / 2 + shunt_length / 2)
-
-            shunt_points_inner = [
-                shunt_end,
-                (shunt_start[0], shunt_end[1]),
-                (shunt_start[0]-shunt_dist, shunt_end[1]),
-                (shunt_start[0]-shunt_dist, shunt_start[1]),
-                shunt_start
-            ]
-
-            shunt_points_outer = [
-                (shunt_start[0], shunt_start[1]-shunt_width),
-                (shunt_start[0]-shunt_dist-shunt_width, shunt_start[1]-shunt_width),
-                (shunt_end[0]-shunt_dist-shunt_width, shunt_end[1]+shunt_width),
-                (shunt_end[0], shunt_end[1]+shunt_width)
-            ]
-
-            combined_pad = p1_top + shunt_points_inner + p1_bot + p4_bot + p3_bot + p2_bot + shunt_points_outer + p4_top + p3_top + p2_top
-
-            if tab:
-                combined_pad = p1_top + shunt_points_inner + p1_bot + slot_points_bot + p4_bot + p3_bot + p2_bot + shunt_points_outer + p4_top + p3_top + p2_top + slot_points_top
-
-            chip.add(SolidPline((0, 0), points=combined_pad, **kwargs))
-        else:
-            if tab:
-                top_pad_points = p4_top + p3_top + p2_top + slot_points_top + p1_top
-                bot_pad_points = p4_bot + p3_bot + p2_bot + p1_bot + slot_points_bot
-            else:
-                top_pad_points = toppad_fillet
-                bot_pad_points = botpad_fillet
-
-            chip.add(SolidPline((0, 0), points=top_pad_points, **kwargs))
-            chip.add(SolidPline((0, 0), points=bot_pad_points, **kwargs))
-
-        if tab:
-            slotposadjust = JcalcTabDims(chip, struct(), gapw=tab_gapw, gapl=tab_gapl, tabw=tab_tabw, tabl=tab_tabl, taboffs=tab_taboffs, r_out=tab_r_out, r_ins=tab_r_ins, absoluteDimensions=False, stemw=None, steml=None, **kwargs)
-            topslotx = padstart[0] + leadw/2 - tab_offset_x + tab_shift_x
-            topslotpos = (topslotx, padstart[1] + slotposadjust[1])
-            botslotx = padstart[0] + leadw2/2 + tab_shift_x
-            botslotpos = (botslotx, padstart[1] - separation - tab_offset_y)
-
-            slot_kwargs = {k: v for k, v in kwargs.items() if k not in ['gapw', 'gapl', 'tabw', 'tabl', 'taboffs', 'r_out', 'r_ins']}
-
-            JContact_slot(chip, m.Structure(chip, start=topslotpos, direction=rotation-90), hflip=flipped, rotation=0,
-                         gapw=tab_gapw, gapl=tab_gapl, tabw=tab_tabw, tabl=tab_tabl, taboffs=tab_taboffs, r_out=tab_r_out, r_ins=tab_r_ins,
-                         **slot_kwargs)
-            JContact_slot(chip, m.Structure(chip, start=botslotpos, direction=rotation-90), hflip=not flipped, rotation=0,
-                         gapw=tab_gapw, gapl=tab_gapl, tabw=tab_tabw, tabl=tab_tabl, taboffs=tab_taboffs, r_out=tab_r_out, r_ins=tab_r_ins,
-                         **slot_kwargs)
-
-            if tabShoulder:
-                chip.add(RoundRect(struct().getPos((-tabShoulderLength, tabShoulderWidth / 2)), tabShoulderLength, tabShoulderWidth / 2, min(tabShoulderRadius, (tabShoulderWidth / 2) / 2),
-                                   roundCorners=[0, 0, 0, 1], rotation=struct().direction, bgcolor=bgcolor, **kwargs))
-                chip.add(RoundRect(struct().getPos((-tabShoulderLength, -tabShoulderWidth / 2)), tabShoulderLength, tabShoulderWidth / 2, min(tabShoulderRadius, (tabShoulderWidth / 2) / 2),
-                                   roundCorners=[1, 0, 0, 0], valign=const.TOP, rotation=struct().direction, bgcolor=bgcolor, **kwargs))
-    else:
-        print('You chose not flipped. This is not yet written, sorry.')
-
 
 def JunctionWithLeads(chip, pos):
     '''
@@ -334,7 +189,7 @@ class SimpleChiplet(m.Chip):
                                     separation=TMON_SEPARATION, shunt=True,
                                     shunt_width=TMON_SHUNT_WIDTH, shunt_dist=TMON_SHUNT_DIST,
                                     shunt_length=TMON_SHUNT_LENGTH, shunt_side='left', flipped=True,
-                                    tab=False,
+                                    tab=True, tab_shift_x=TMON_PAD_WIDTH/2 - TMON_LEAD_WIDTH/2,
                                     layer=wafer.lyr(METAL_LAYER))
 
                 # Leads and Dolan junction in the pad gap
@@ -408,7 +263,7 @@ class CornerChip(m.Chip):
                                     separation=TMON_SEPARATION, shunt=True,
                                     shunt_width=TMON_SHUNT_WIDTH, shunt_dist=TMON_SHUNT_DIST,
                                     shunt_length=TMON_SHUNT_LENGTH, shunt_side='left', flipped=True,
-                                    tab=False,
+                                    tab=True, tab_shift_x=TMON_PAD_WIDTH/2 - TMON_LEAD_WIDTH/2,
                                     layer=wafer.lyr(METAL_LAYER))
 
                 # Leads and Dolan junction in the pad gap

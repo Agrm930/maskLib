@@ -684,23 +684,13 @@ def JSingleProbePadLeads(chip,pos,padwidth=250,padheight=None,padradius=25,tab=F
 
 def FlagPads(chip, pos, flagw=1500, flagh=750, flagw2=None, flagh2=None, leadw=100, leadw2=None, leadh=2000, leadh2=None, separation=200, padradius=25,
              tab=False, tabShoulder=False, tabShoulderWidth=30, tabShoulderLength=80, tabShoulderRadius=None,
-             flipped=False, rotation=0, bgcolor=None, shunt=False, shunt_width=10, shunt_dist=150, shunt_length=400, shunt_side='left',
-             tab_gapw=3, tab_gapl=0.5, tab_tabw=2, tab_tabl=0.5, tab_taboffs=-0.5, tab_r_out=1.5, tab_r_ins=1.5, **kwargs):
+             flipped=False, rotation=0, bgcolor=None, shunt=False, shunt_width=10, shunt_dist=150, shunt_length=400, shunt_side='left', **kwargs):
     '''
     Creates a pair of flag-shaped pad with rounded corners, and a JContactTab on one end (defaults to right)
     No overlap : XOR mode compatible
     
     Optionally set tabShoulder to True to extend a thinner lead from the main contact pad.
     Optionally add a shunt between the pads.
-    
-    Tab/claw parameters (for capacitive coupling):
-      tab_gapw: gap width
-      tab_gapl: gap length  
-      tab_tabw: tab width
-      tab_tabl: tab length
-      tab_taboffs: tab offset
-      tab_r_out: outer radius for curves
-      tab_r_ins: inner radius for claw curves
     '''
     def struct():
         if isinstance(pos, m.Structure):
@@ -796,18 +786,15 @@ def FlagPads(chip, pos, flagw=1500, flagh=750, flagw2=None, flagh2=None, leadw=1
             ]
 
             if tab:
-                slotposadjust = JcalcTabDims(chip,struct(),gapw=tab_gapw,gapl=tab_gapl,tabw=tab_tabw,tabl=tab_tabl,taboffs=tab_taboffs,r_out=tab_r_out,r_ins=tab_r_ins,absoluteDimensions=False,stemw=None,steml=None)
-                # Position slots at the connection points of leads to pads
-                # Top slot: shift left by 5000 from center
-                topslotpos = (flagstart[0] + leadw/2 - 5000, flagstart[1])
+                slotposadjust = JcalcTabDims(chip,struct(),gapw=3,gapl=0.5,tabw=2,tabl=0.5,taboffs=-0.5,r_out=1.5,r_ins=1.5,absoluteDimensions=False,stemw=None,steml=None,**kwargs)
+                topslotpos = (flagstart[0] + leadw/2, flagstart[1]+slotposadjust[1])
                 slot_points_top = [
                     (flagstart[0] + leadw/2 + slotposadjust[0], flagstart[1]),
                     (flagstart[0] + leadw/2 + slotposadjust[0], flagstart[1]+slotposadjust[1]),
                     (flagstart[0] + leadw/2 - slotposadjust[0], flagstart[1]+slotposadjust[1]),
                     (flagstart[0] + leadw/2 - slotposadjust[0], flagstart[1])
                     ]
-                # Bottom slot: shift down by 5000 from current position
-                botslotpos = (flagstart[0] + leadw2/2, flagstart[1] - separation - 5000)
+                botslotpos = (flagstart[0] + leadw2/2, flagstart[1] - separation)
                 slot_points_bot = [
                     (flagstart[0] + leadw2/2 - slotposadjust[0], flagstart[1] - separation),
                     (flagstart[0] + leadw2/2 - slotposadjust[0], flagstart[1] - separation - slotposadjust[1]),
@@ -821,18 +808,15 @@ def FlagPads(chip, pos, flagw=1500, flagh=750, flagw2=None, flagh2=None, leadw=1
             chip.add(SolidPline((0, 0), points=combined_flag))
         else:
             if tab:
-                slotposadjust = JcalcTabDims(chip,struct(),gapw=tab_gapw,gapl=tab_gapl,tabw=tab_tabw,tabl=tab_tabl,taboffs=tab_taboffs,r_out=tab_r_out,r_ins=tab_r_ins,absoluteDimensions=False,stemw=None,steml=None)
-                # Position slots at the connection points of leads to pads
-                # Top slot: shift left by 5000 from center
-                topslotpos = (flagstart[0] + leadw/2 - 5000, flagstart[1])
+                slotposadjust = JcalcTabDims(chip,struct(),gapw=3,gapl=0.5,tabw=2,tabl=0.5,taboffs=-0.5,r_out=1.5,r_ins=1.5,absoluteDimensions=False,stemw=None,steml=None,**kwargs)
+                topslotpos = (flagstart[0] + leadw/2, flagstart[1]+slotposadjust[1])
                 slot_points_top = [
                     (flagstart[0] + leadw/2 + slotposadjust[0], flagstart[1]),
                     (flagstart[0] + leadw/2 + slotposadjust[0], flagstart[1]+slotposadjust[1]),
                     (flagstart[0] + leadw/2 - slotposadjust[0], flagstart[1]+slotposadjust[1]),
                     (flagstart[0] + leadw/2 - slotposadjust[0], flagstart[1])
                     ]
-                # Bottom slot: shift down by 5000 from current position
-                botslotpos = (flagstart[0] + leadw2/2, flagstart[1] - separation - 5000)
+                botslotpos = (flagstart[0] + leadw2/2, flagstart[1] - separation)
                 slot_points_bot = [
                     (flagstart[0] + leadw2/2 - slotposadjust[0], flagstart[1] - separation),
                     (flagstart[0] + leadw2/2 - slotposadjust[0], flagstart[1] - separation - slotposadjust[1]),
@@ -864,18 +848,12 @@ def FlagPads(chip, pos, flagw=1500, flagh=750, flagw2=None, flagh2=None, leadw=1
             # print(flagstart)
             # print(slotpos)
             # testing top/botslotpos assignment
-            slotposadjust = JcalcTabDims(chip,struct(),gapw=tab_gapw,gapl=tab_gapl,tabw=tab_tabw,tabl=tab_tabl,taboffs=tab_taboffs,r_out=tab_r_out,r_ins=tab_r_ins,absoluteDimensions=False,stemw=None,steml=None)
-            # Apply offsets: top slot shifted left by 5000, bottom slot shifted down by 5000
-            topslotpos = (flagstart[0] + leadw/2 - 5000, flagstart[1]+slotposadjust[1])
-            botslotpos = (flagstart[0] + leadw2/2, flagstart[1] - separation - 5000)
+            slotposadjust = JcalcTabDims(chip,struct(),gapw=3,gapl=0.5,tabw=2,tabl=0.5,taboffs=-0.5,r_out=1.5,r_ins=1.5,absoluteDimensions=False,stemw=None,steml=None,**kwargs)
+            topslotpos = (flagstart[0] + leadw/2, flagstart[1]+slotposadjust[1])
+            botslotpos = (flagstart[0] + leadw2/2, flagstart[1] - separation)
             
-            # Filter tab parameters from kwargs to avoid conflicts
-            slot_kwargs = {k: v for k, v in kwargs.items() if k not in ['gapw', 'gapl', 'tabw', 'tabl', 'taboffs', 'r_out', 'r_ins']}
-            
-            JContact_slot(chip, m.Structure(chip, start=topslotpos, direction=rotation-90), hflip=flipped, rotation=0, 
-                         gapw=tab_gapw, gapl=tab_gapl, tabw=tab_tabw, tabl=tab_tabl, taboffs=tab_taboffs, r_out=tab_r_out, r_ins=tab_r_ins, **slot_kwargs)
-            JContact_slot(chip, m.Structure(chip, start=botslotpos, direction=rotation-90), hflip=not flipped, rotation=0, 
-                         gapw=tab_gapw, gapl=tab_gapl, tabw=tab_tabw, tabl=tab_tabl, taboffs=tab_taboffs, r_out=tab_r_out, r_ins=tab_r_ins, **slot_kwargs)
+            JContact_slot(chip, m.Structure(chip, start=topslotpos, direction=rotation-90), hflip=flipped, rotation=0, **kwargs)
+            JContact_slot(chip, m.Structure(chip, start=botslotpos, direction=rotation-90), hflip=not flipped, rotation=0, **kwargs)
 
 
 
@@ -1198,16 +1176,16 @@ def TPads(chip, pos, flagw=1500, flagh=750, flagw2=None, flagh2=None, leadw=100,
 #     else:
 #         print('You chose not flipped. This is not yet written, sorry.')
 def Transmon3DWithShunt(chip, pos, padw=1500, padh=750, padw2=None, padh2=None, leadw=100, leadw2=None, leadh=2000, leadh2=None, separation=200, padradius=20,
-                        tab=False, tab_gapw=3, tab_gapl=0.5, tab_tabw=2, tab_tabl=0.5, tab_taboffs=-0.5, tab_r_out=1.5, tab_r_ins=1.5,
-                        tab_offset_x=0, tab_offset_y=0, tab_shift_x=0,
-                        tabShoulder=False, tabShoulderWidth=30, tabShoulderLength=80, tabShoulderRadius=None,
+                        tab=False, tab_shift_x=0, tabShoulder=False, tabShoulderWidth=30, tabShoulderLength=80, tabShoulderRadius=None,
                         flipped=False, rotation=0, bgcolor=None, shunt=False, shunt_width=10, shunt_dist=150, shunt_length=400, shunt_side='left', **kwargs):
     '''
     Creates a pair of Transmon3D pads with rounded corners, and a JContactTab on one end (defaults to right)
     No overlap : XOR mode compatible
-    
+
     Optionally set tabShoulder to True to extend a thinner lead from the main contact pad.
     Optionally add a shunt between the pads.
+    tab_shift_x moves the contact tabs/slots right of their default position (leadw/2 from the pad left edge),
+    e.g. tab_shift_x=padw/2-leadw/2 centers them on the pads.
     '''
 
     def struct():
@@ -1231,7 +1209,6 @@ def Transmon3DWithShunt(chip, pos, padw=1500, padh=750, padw2=None, padh2=None, 
         leadh2 = leadh
 
     if flipped:
-        tab_shift_x = tab_shift_x - 10
         toppad = [
             padstart,
             (padstart[0] + padw, padstart[1]),
@@ -1266,9 +1243,9 @@ def Transmon3DWithShunt(chip, pos, padw=1500, padh=750, padw2=None, padh2=None, 
         botpad_fillet = p4_bot + p3_bot + p2_bot + p1_bot
 
         if tab:
-            slotposadjust = JcalcTabDims(chip, struct(), gapw=tab_gapw, gapl=tab_gapl, tabw=tab_tabw, tabl=tab_tabl, taboffs=tab_taboffs, r_out=tab_r_out, r_ins=tab_r_ins, absoluteDimensions=False, stemw=None, steml=None, **kwargs)
-            # Keep pad slot cutouts local to pads; offsets are only for external claw placement.
+            slotposadjust = JcalcTabDims(chip, struct(), gapw=3, gapl=0.5, tabw=2, tabl=0.5, taboffs=-0.5, r_out=1.5, r_ins=1.5, absoluteDimensions=False, stemw=None, steml=None, **kwargs)
             topslotx = padstart[0] + leadw/2 + tab_shift_x
+            botslotx = padstart[0] + leadw2/2 + tab_shift_x
             topslotpos = (topslotx, padstart[1] + slotposadjust[1])
             slot_points_top = [
                 (topslotx + slotposadjust[0], padstart[1]),
@@ -1276,7 +1253,6 @@ def Transmon3DWithShunt(chip, pos, padw=1500, padh=750, padw2=None, padh2=None, 
                 (topslotx - slotposadjust[0], padstart[1] + slotposadjust[1]),
                 (topslotx - slotposadjust[0], padstart[1])
             ]
-            botslotx = padstart[0] + leadw2/2 + tab_shift_x
             botslotpos = (botslotx, padstart[1] - separation)
             slot_points_bot = [
                 (botslotx - slotposadjust[0], padstart[1] - separation),
@@ -1317,11 +1293,12 @@ def Transmon3DWithShunt(chip, pos, padw=1500, padh=750, padw2=None, padh2=None, 
     
             chip.add(SolidPline((0, 0), points=combined_pad, **kwargs))
         else:
-            if tab:
+            if tab:            
                 # on the top pad the slot points need to be drawn before the last fillet
-                top_pad_points = p4_top + p3_top + p2_top + slot_points_top + p1_top
+                top_pad_points = p4_top + p3_top + p2_top + slot_points_top + p1_top 
                 # on the bottom pad the slot points are drawn last
                 bot_pad_points = p4_bot + p3_bot + p2_bot + p1_bot + slot_points_bot
+                
             else:
                 top_pad_points = toppad_fillet
                 bot_pad_points = botpad_fillet
@@ -1330,21 +1307,12 @@ def Transmon3DWithShunt(chip, pos, padw=1500, padh=750, padw2=None, padh2=None, 
             chip.add(SolidPline((0, 0), points=bot_pad_points, **kwargs))
 
         if tab:
-            slotposadjust = JcalcTabDims(chip, struct(), gapw=tab_gapw, gapl=tab_gapl, tabw=tab_tabw, tabl=tab_tabl, taboffs=tab_taboffs, r_out=tab_r_out, r_ins=tab_r_ins, absoluteDimensions=False, stemw=None, steml=None, **kwargs)
-            # Apply requested offsets: top claw shifts in X, bottom claw shifts in Y.
-            topslotx = padstart[0] + leadw/2 - tab_offset_x + tab_shift_x
-            topslotpos = (topslotx, padstart[1] + slotposadjust[1])
-            botslotx = padstart[0] + leadw2/2 + tab_shift_x
-            botslotpos = (botslotx, padstart[1] - separation - tab_offset_y)
+            slotposadjust = JcalcTabDims(chip, struct(), gapw=3, gapl=0.5, tabw=2, tabl=0.5, taboffs=-0.5, r_out=1.5, r_ins=1.5, absoluteDimensions=False, stemw=None, steml=None, **kwargs)
+            topslotpos = (padstart[0] + leadw/2 + tab_shift_x, padstart[1] + slotposadjust[1])
+            botslotpos = (padstart[0] + leadw2/2 + tab_shift_x, padstart[1] - separation)
 
-            slot_kwargs = {k: v for k, v in kwargs.items() if k not in ['gapw', 'gapl', 'tabw', 'tabl', 'taboffs', 'r_out', 'r_ins']}
-            
-            JContact_slot(chip, m.Structure(chip, start=topslotpos, direction=rotation-90), hflip=flipped, rotation=0,
-                         gapw=tab_gapw, gapl=tab_gapl, tabw=tab_tabw, tabl=tab_tabl, taboffs=tab_taboffs, r_out=tab_r_out, r_ins=tab_r_ins,
-                         **slot_kwargs)
-            JContact_slot(chip, m.Structure(chip, start=botslotpos, direction=rotation-90), hflip=not flipped, rotation=0,
-                         gapw=tab_gapw, gapl=tab_gapl, tabw=tab_tabw, tabl=tab_tabl, taboffs=tab_taboffs, r_out=tab_r_out, r_ins=tab_r_ins,
-                         **slot_kwargs)
+            JContact_slot(chip, m.Structure(chip, start=topslotpos, direction=rotation-90), hflip=flipped, rotation=0, **kwargs)
+            JContact_slot(chip, m.Structure(chip, start=botslotpos, direction=rotation-90), hflip=not flipped, rotation=0, **kwargs)
 
             if tabShoulder: #note that this is broken
                 chip.add(RoundRect(struct().getPos((-tabShoulderLength, tabShoulderWidth / 2)), tabShoulderLength, tabShoulderWidth / 2, min(tabShoulderRadius, (tabShoulderWidth / 2) / 2), 
