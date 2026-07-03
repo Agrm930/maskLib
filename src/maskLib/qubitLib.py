@@ -4,6 +4,7 @@
 Created on Fri Apr 24 14:48:45 2020
 
 @author: sasha
+Edited by Agrim, 2026 (fixed dose-array indexing/broadcast bugs in add_dose_array)
 """
 import numpy as np
 import maskLib.MaskLib as m
@@ -1136,9 +1137,22 @@ def add_dose_array(chip,
                    JJparams_label=True,
                    Doselabels=True,
                    homeplates=True,
-                   **kwargs 
+                   **kwargs
                    ):
-    indices=kwargs.get('indices', [(i,j) for i in range(arraydims[0]) for j in range(arraydims[1])][0])
+    '''
+    Draw a dose-test array of junctions (one per grid point). qubit selects the
+    style: 'Transmon' (bare smallJJ + leads), 'SNAIL', 'Fluxonium', or 'Shunt'.
+
+    Array-valued kwargs and how they are indexed per field (i,j):
+      indexed [i]    (1D, length arraydims[0]): smallfingerWs, bigfingerWs, bigJJfingerWs
+      indexed [j]    (1D, length arraydims[1]): bridgedoses
+      indexed [i][j] (2D, shape arraydims):     smallfingerdoses, bigfingerdoses, bigJJfingerdoses
+    Scalars are broadcast automatically.
+
+    NOTE: for transmon probe arrays consider the sweep system in
+    'junction array.py' (field_params/JunctionWithLeads) instead -- it
+    generates dose layers, field labels, and a parameter CSV automatically.
+    '''
     # Add a dose array to the chip
     if doses is None:
         doses = np.ones(arraydims)*basedose
@@ -1190,21 +1204,23 @@ def add_dose_array(chip,
                 dummy_FT_clockwises_inner = dummy_FT_clockwises_outer
                 filleted_points_inner = []
                 for point, quadrant, clockwise in zip(dummy_FT_pts_inner, dummy_FT_quadrants_inner, dummy_FT_clockwises_inner):
-                    radius = params['outner_radius'] if not clockwise else params['inner_radius']
+                    radius = params['outer_radius'] if not clockwise else params['inner_radius']
                     filleted_points_inner.extend(cornerRound(point, quadrant, radius, clockwise=clockwise))
                 chip.add(SolidPline((i*arrayspacing,j*arrayspacing), points=filleted_points_inner, layer='ARRAYFT'))
 
             #still need to make this take arguments from the kwargs or at least somewhere up higher
             if qubit=='Transmon':
                 w = 90-1.74 if 'w' not in kwargs else kwargs['w']
-                # populate a dose array for the bridge, with kwargs if provided
-                smallfingerWs=kwargs.get('smallfingerWs', np.ones(arraydims)*1000)
-                # print("transmon startpoint: ", (startpoint[0]+50.5+i*arrayspacing, startpoint[1]-100+j*arrayspacing))
-                smallJJ(chip, 
+                # finger width varies along i; scalar is broadcast, default
+                # matches smallJJ's own default (0.21 um)
+                smallfingerWs = kwargs.get('smallfingerWs', 0.21)
+                if np.isscalar(smallfingerWs):
+                    smallfingerWs = np.full(arraydims[0], smallfingerWs)
+                smallJJ(chip,
                         m.Structure(chip, start=(startpoint[0]+50.5+i*arrayspacing, startpoint[1]-100+j*arrayspacing),direction=90),
-                        bridgelayer=f'BRIDGE_{indices[1]}', smallfingerwidth=smallfingerWs[i],
+                        bridgelayer=f'BRIDGE_{j}', smallfingerwidth=smallfingerWs[i],
                         bridgeW=0.91, bridgeL=0.48
-                        )                
+                        )
                 Strip_contact(chip,
                               m.Structure(chip, start=(startpoint[0]+49.5+i*arrayspacing, startpoint[1]-98.26+j*arrayspacing)),
                               1,
@@ -1222,8 +1238,8 @@ def add_dose_array(chip,
             
             if qubit=='SNAIL':
                 starterpoint=(startpoint[0]+i*arrayspacing, startpoint[1]+j*arrayspacing)
-                smallfingerWs=kwargs.get('smallfingerWs', np.ones(arraydims))
-                bridgedoses=kwargs.get('bridgedoses', np.ones(arraydims)*1000)
+                smallfingerWs=kwargs.get('smallfingerWs', 1)
+                bridgedoses=kwargs.get('bridgedoses', 1000)
 
                 n_junc = kwargs.get('n_junc', 3)
 
@@ -1240,22 +1256,21 @@ def add_dose_array(chip,
                 big_JJ_chainTF = kwargs.get('big_JJ_chainTF', False)
                 small_JJTF = kwargs.get('small_JJTF', True)
 
-                                    
-
-                # if type(JJwidth) == float:
-                #     JJwidth = np.ones(arraydims)*JJwidth
-                if (type(smallfingerWs) == float or type(smallfingerWs) == int):
-                    smallfingerWs = np.ones(arraydims)*smallfingerWs
-                if (type(small_finger_doses) == float) or (type(small_finger_doses) == int):
-                    small_finger_doses = np.ones(arraydims)*small_finger_doses
-                if (type(big_finger_doses) == float) or (type(big_finger_doses) == int):
-                    big_finger_doses = np.ones(arraydims)*big_finger_doses
-                if (type(big_JJ_finger_doses) == float) or (type(big_JJ_finger_doses) == int):
-                    big_JJ_finger_doses = np.ones(arraydims)*big_JJ_finger_doses
-                if (type(big_JJ_finger_widths) == float) or (type(big_JJ_finger_widths) == int):
-                    big_JJ_finger_widths = np.ones(arraydims)*big_JJ_finger_widths
-                if (type(bridgedoses) == float) or (type(bridgedoses) == int):
-                    bridgedoses = np.ones(arraydims)*bridgedoses
+                # broadcast scalars to arrays shaped for how each is indexed
+                # below: [i] -> length arraydims[0], [j] -> length arraydims[1],
+                # [i][j] -> full 2D arraydims
+                if np.isscalar(smallfingerWs):
+                    smallfingerWs = np.full(arraydims[0], smallfingerWs)
+                if np.isscalar(big_JJ_finger_widths):
+                    big_JJ_finger_widths = np.full(arraydims[0], big_JJ_finger_widths)
+                if np.isscalar(bridgedoses):
+                    bridgedoses = np.full(arraydims[1], bridgedoses)
+                if np.isscalar(small_finger_doses):
+                    small_finger_doses = np.full(arraydims, small_finger_doses)
+                if np.isscalar(big_finger_doses):
+                    big_finger_doses = np.full(arraydims, big_finger_doses)
+                if np.isscalar(big_JJ_finger_doses):
+                    big_JJ_finger_doses = np.full(arraydims, big_JJ_finger_doses)
 
                 # print(smallfingerWs, "smallfingerWs")
                 # print(small_finger_doses, "small_finger_doses")
@@ -1303,16 +1318,19 @@ def add_dose_array(chip,
                 small_finger_doses = kwargs.get('smallfingerdoses', np.ones(arraydims))
                 big_finger_doses   = kwargs.get('bigfingerdoses', np.ones(arraydims))
 
-                smallfingerWs = kwargs.get('smallfingerWs', np.ones(arraydims))
+                smallfingerWs = kwargs.get('smallfingerWs', 1)
                 bigfingerWs   = kwargs.get('bigfingerWs', 0.41)
 
                 bridge_doses  = kwargs.get('bridgedoses', np.ones(arraydims))
 
-                # scalar → array safety
+                # scalar -> array safety; widths are indexed [i] below, so
+                # they must be 1D of length arraydims[0] (not 2D)
                 if np.isscalar(smallfingerWs):
-                    smallfingerWs = np.ones(arraydims) * smallfingerWs
+                    smallfingerWs = np.full(arraydims[0], smallfingerWs)
                 if np.isscalar(bigfingerWs):
-                    bigfingerWs = np.ones(arraydims) * bigfingerWs
+                    bigfingerWs = np.full(arraydims[0], bigfingerWs)
+                if np.isscalar(bridge_doses):
+                    bridge_doses = np.full(arraydims, bridge_doses)
 
                 # --- call Fluxonium generator ---
                 Fluxonium3D(
@@ -1421,14 +1439,16 @@ def add_dose_array(chip,
                                             'shift_dose', 'label_dose']):
                     if label == 'leads_contactpads_dose':
                         xpos+=70
-                    if type(label_list[ii]) == (float or int):
-                        chip.add_chip_label(label+ ' = ' + str(round(label_list[ii], 3)),  #+ str(round(label_list[ii], 3)), 
-                                    layer='LABEL', 
+                    # (was `type(x) == (float or int)`, which only ever
+                    # checked float -- `(float or int)` evaluates to float)
+                    if isinstance(label_list[ii], (int, float)):
+                        chip.add_chip_label(label+ ' = ' + str(round(label_list[ii], 3)),
+                                    layer='LABEL',
                                     position=(xpos, ypos), height=fontsize
                                     )
                     else:
-                        chip.add_chip_label(label+ ' = ' + str(label_list[ii]),  #+ str(round(label_list[ii], 3)), 
-                                    layer='LABEL', 
+                        chip.add_chip_label(label+ ' = ' + str(label_list[ii]),
+                                    layer='LABEL',
                                     position=(xpos, ypos), height=fontsize
                                     )
                     ypos-=fontsize+10
@@ -1437,16 +1457,21 @@ def add_dose_array(chip,
 
 
 
-def add_JJ_dose_array(chip, 
-                   startpoint=(0,0), 
-                   arraydims=(5,5), 
-                   arrayspacing=500, 
-                   doses=None, 
+def add_JJ_dose_array(chip,
+                   startpoint=(0,0),
+                   arraydims=(5,5),
+                   arrayspacing=500,
+                   doses=None,
                    basedose=1000,
                    printdose=False,
                    optlayer='OPTICAL',
-                   JJlayer='JJ', 
+                   JJlayer='JJ',
                    FT=False):
+    '''
+    LEGACY: draws a grid of shunted transmon pads (plus optional dummy FT
+    rectangles) with no junctions. Nothing in this repo calls it -- for real
+    dose arrays see add_dose_array or the sweep system in 'junction array.py'.
+    '''
     # Add a dose array to the chip
     if doses is None:
         doses = np.ones(arraydims)*basedose
@@ -1480,7 +1505,7 @@ def add_JJ_dose_array(chip,
                 for point, quadrant, clockwise in zip(dummy_FT_pts_outer, dummy_FT_quadrants_outer, dummy_FT_clockwises_outer):
                     radius = params['inner_radius'] if not clockwise else params['outer_radius']
                     filleted_points_outer.extend(cornerRound(point, quadrant, radius, clockwise=clockwise))
-                chip.add(SolidPline((i*arrayspacing,j*arrayspacing), points=filleted_points_outer, layer=layer))
+                chip.add(SolidPline((i*arrayspacing,j*arrayspacing), points=filleted_points_outer, layer=optlayer))
                 
 
                 dummy_FT_pts_inner = [
@@ -1496,7 +1521,7 @@ def add_JJ_dose_array(chip,
                 for point, quadrant, clockwise in zip(dummy_FT_pts_inner, dummy_FT_quadrants_inner, dummy_FT_clockwises_inner):
                     radius = params['outer_radius'] if not clockwise else params['inner_radius']
                     filleted_points_inner.extend(cornerRound(point, quadrant, radius, clockwise=clockwise))
-                chip.add(SolidPline((i*arrayspacing,j*arrayspacing), points=filleted_points_inner, layer=layer))
+                chip.add(SolidPline((i*arrayspacing,j*arrayspacing), points=filleted_points_inner, layer=optlayer))
 
             # Draw a transmon 3D with shunt
             Transmon3DWithShunt(chip, (params['startpoint'][0]+i*arrayspacing, params['startpoint'][1]+j*arrayspacing) , padw=100, padh=300, leadw=100, leadh=2000, separation=200, shunt=True, shunt_width=10, shunt_dist=150, shunt_length=400, shunt_side='left', flipped=True,layer='DOSEARRAY')
