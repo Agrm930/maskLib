@@ -41,12 +41,31 @@ CORNER_GRID_N = int((CORNER_CHIP_SIZE - 2 * FIELD_PADDING) / FIELD_STEP)  # fiel
 FRAME_LAYER = '703/0'      # Layer for chip frame boundary
 METAL_LAYER = 'BASEMETAL'  # Layer for metal structures
 
-# output toggles
-RENDER_FULL_WAFER = False          # Set False to skip writing the full wafer DXF
-EXPORT_SAMPLE_CHIPLET_DXF = True   # Set False to skip the standalone chiplet DXF
-EXPORT_CORNER_CHIP_DXF = True      # Set False to skip the standalone corner-chip DXF
+# ------------------------------------------------------------------------------
+# Workflow toggles -- the two bools below pick what this run generates
+# ------------------------------------------------------------------------------
+# OPTICAL_ONLY = True : draw the FULL WAFER (all chiplets + corner chips
+#                       placed) with optical layers only -- no ebeam
+#                       structures, no standalone chip DXFs, no xlsx.
+#                       For wafer-level layout checks. Output name gets an
+#                       '_opticalOnly' suffix.
+# OPTICAL_ONLY = False: no full wafer; generate ONE standalone chip DXF with
+#                       all ebeam structures plus its sweep xlsx. Which chip
+#                       is picked by the second toggle:
+#     GENERATE_CORNER_CHIP = False: the main chiplet (40x40 fields)
+#     GENERATE_CORNER_CHIP = True : the corner chip (20x20 fields) with its
+#                                   own 20x20 xlsx
+OPTICAL_ONLY = False
+GENERATE_CORNER_CHIP = False
+
 REUSE_IDENTICAL_CHIPS = True       # Reuse one generated block for repeated chiplets/corner chips
-EXPORT_SWEEP_MAP = True            # Write <wafer>_sweep_map.xlsx (params, minimap, per-param gradient maps)
+
+# derived output flags -- set the two workflow toggles above, not these
+RENDER_FULL_WAFER = OPTICAL_ONLY
+DRAW_EBEAM_LAYERS = not OPTICAL_ONLY
+EXPORT_SAMPLE_CHIPLET_DXF = (not OPTICAL_ONLY) and (not GENERATE_CORNER_CHIP)
+EXPORT_CORNER_CHIP_DXF = (not OPTICAL_ONLY) and GENERATE_CORNER_CHIP
+EXPORT_SWEEP_MAP = not OPTICAL_ONLY
 
 # ===============================================================================
 # 2) Transmon & junction parameters (defaults; the sweep overrides per field)
@@ -141,6 +160,8 @@ DESIGN_NAME = 'TmonJJArray'
 WAFER_NAME = '%s_%gmm_%dx%d_tile%dx%d_%s' % (
     DESIGN_NAME, CHIPLET_SIZE_x / 1000, GRID_NX, GRID_NY,
     TILE_NX, TILE_NY, sweep.sweep_type())
+if OPTICAL_ONLY:
+    WAFER_NAME += '_opticalOnly'
 print('Output name:', WAFER_NAME)
 
 # ===============================================================================
@@ -226,8 +247,9 @@ def draw_field(chip, wafer, cx, cy, params, flabel):
                         tab=True, tab_shift_x=TMON_PAD_WIDTH/2 - TMON_LEAD_WIDTH/2,
                         layer=wafer.lyr(dose_layer(METAL_LAYER, params, 'pads_dose')))
 
-    # Leads and Dolan junction in the pad gap
-    JunctionWithLeads(chip, tpos, params)
+    # Leads and Dolan junction in the pad gap (ebeam structures)
+    if DRAW_EBEAM_LAYERS:
+        JunctionWithLeads(chip, tpos, params)
 
     # field label (tile letter + column + row, e.g. A0103) in the
     # bottom-left corner, clear of the pads and shunt
@@ -289,6 +311,10 @@ LAYERS_EBEAM = [
 # per-dose ebeam layers from the sweep (e.g. BRIDGE_400 ... SMALLFINGER_1500)
 LAYERS_EBEAM_DOSES = [[name, 50 + k % 200] for k, name in enumerate(sweep.dose_layers())]
 
+if not DRAW_EBEAM_LAYERS:
+    LAYERS_EBEAM = []
+    LAYERS_EBEAM_DOSES = []
+
 w.SetupLayers(LAYERS_OPTICAL_1 + LAYERS_OPTICAL_2 + LAYERS_GUIDE
               + LAYERS_EBEAM + LAYERS_EBEAM_DOSES)
 
@@ -298,8 +324,11 @@ print('  inactive (never written): 0, VIEWPORTS')
 print('  guide    (not written):   WAFER_FRAME, ' + ', '.join(l[0] for l in LAYERS_GUIDE))
 print('  optical 1: ' + ', '.join(l[0] for l in LAYERS_OPTICAL_1))
 print('  optical 2: ' + ', '.join(l[0] for l in LAYERS_OPTICAL_2) + '  (+ Opt_Mark alignment)')
-print('  ebeam:     ' + ', '.join(l[0] for l in LAYERS_EBEAM)
-      + ' + %d per-dose layers' % len(LAYERS_EBEAM_DOSES))
+if DRAW_EBEAM_LAYERS:
+    print('  ebeam:     ' + ', '.join(l[0] for l in LAYERS_EBEAM)
+          + ' + %d per-dose layers' % len(LAYERS_EBEAM_DOSES))
+else:
+    print('  ebeam:     DISABLED (DRAW_EBEAM_LAYERS = False)')
 
 #initialize the wafer (remember to finalize any wafer properties like layers before initializing!)
 w.init()
@@ -407,6 +436,13 @@ class CornerChip11000um(m.Chip):
             self.add_chip_label(line, (CORNER_CHIP_SIZE/2, 400 - 110*k),
                                 height=70, layer='LABELS')
 
+        # corner-chip sweep workbook, covering only its own grid (20x20;
+        # tile parameter values wrap around, matching what is drawn)
+        if EXPORT_SWEEP_MAP and GENERATE_CORNER_CHIP:
+            xlsx_path = wafer.path + wafer.fileName + '_CORNER_%dx%d_sweep_map.xlsx' % (mx, my)
+            sweep.export_workbook(xlsx_path, grid_nx=mx, grid_ny=my, strict=False)
+            print('Corner sweep map saved to', xlsx_path)
+
 
          # Markers at four corners of the chiplet (placed once, outside field loop)
         marker_size = 100  # marker size in microns
@@ -431,62 +467,64 @@ class CornerChip11000um(m.Chip):
 
 
 # ===============================================================================
-# generate chiplets
+# generate chips (what gets built is set by the workflow toggles up top)
 # ===============================================================================
-# Create and set the default chiplet
 # chip IDs carry each chip's own size and field grid (the wafer-name prefix
 # describes the main chiplet design; this suffix describes the chip itself)
-default_chiplet = Chiplet21000um(w, f'CHIPLET_{CHIPLET_SIZE_x}um_{GRID_NX}x{GRID_NY}', w.defaultLayer)
-w.setDefaultChip(default_chiplet)
 
+# --- main chiplet: needed for the full wafer, or when it is the requested chip
+if OPTICAL_ONLY or not GENERATE_CORNER_CHIP:
+    default_chiplet = Chiplet21000um(w, f'CHIPLET_{CHIPLET_SIZE_x}um_{GRID_NX}x{GRID_NY}', w.defaultLayer)
+    w.setDefaultChip(default_chiplet)
 
-# Populate remaining chiplets in buffer
-if REUSE_IDENTICAL_CHIPS:
-    for i in range(1, len(w.chips)):
-        w.setChipBuffer(default_chiplet, i)
-else:
-    for i in range(1, len(w.chips)):
-        w.setChipBuffer(Chiplet21000um(w, f'CHIPLET_{CHIPLET_SIZE_x}um_{GRID_NX}x{GRID_NY}_{i}', w.defaultLayer).save(w), i)
+    # Populate remaining chiplets in buffer
+    if REUSE_IDENTICAL_CHIPS:
+        for i in range(1, len(w.chips)):
+            w.setChipBuffer(default_chiplet, i)
+    else:
+        for i in range(1, len(w.chips)):
+            w.setChipBuffer(Chiplet21000um(w, f'CHIPLET_{CHIPLET_SIZE_x}um_{GRID_NX}x{GRID_NY}_{i}', w.defaultLayer).save(w), i)
 
-# Save a sample chip DXF if we have enough chips
-if EXPORT_SAMPLE_CHIPLET_DXF and len(w.chips) > 1:
-    w.chips[1].save(w, drawCopyDXF=True, dicingBorder=False)
+    # Save a standalone chiplet DXF if requested
+    if EXPORT_SAMPLE_CHIPLET_DXF and len(w.chips) > 1:
+        w.chips[1].save(w, drawCopyDXF=True, dicingBorder=False)
 
-# Add four corner chips manually
-# Calculate corner positions (at ~70% of wafer radius, roughly at 45 degrees)
-wafer_radius = m.waferDiameters['4in'] / 2
-corner_distance = wafer_radius * 0.55
+# --- corner chips: needed for the full wafer, or when they are the requested chip
+if OPTICAL_ONLY or GENERATE_CORNER_CHIP:
+    # Calculate corner positions (at ~55% of wafer radius, at 45 degrees)
+    wafer_radius = m.waferDiameters['4in'] / 2
+    corner_distance = wafer_radius * 0.55
 
-corner_positions = [
-    (-corner_distance, -corner_distance),  # Bottom-left
-    (corner_distance, -corner_distance),   # Bottom-right
-    (-corner_distance, corner_distance),   # Top-left
-    (corner_distance, corner_distance),    # Top-right
-]
+    corner_positions = [
+        (-corner_distance, -corner_distance),  # Bottom-left
+        (corner_distance, -corner_distance),   # Bottom-right
+        (-corner_distance, corner_distance),   # Top-left
+        (corner_distance, corner_distance),    # Top-right
+    ]
 
-if REUSE_IDENTICAL_CHIPS:
-    corner_chip = CornerChip11000um(w, f'CORNER_{CORNER_CHIP_SIZE}um_{CORNER_GRID_N}x{CORNER_GRID_N}', w.defaultLayer)
-    corner_chip.save(w, drawCopyDXF=EXPORT_CORNER_CHIP_DXF, dicingBorder=False)
+    if REUSE_IDENTICAL_CHIPS:
+        corner_chip = CornerChip11000um(w, f'CORNER_{CORNER_CHIP_SIZE}um_{CORNER_GRID_N}x{CORNER_GRID_N}', w.defaultLayer)
+        corner_chip.save(w, drawCopyDXF=EXPORT_CORNER_CHIP_DXF, dicingBorder=False)
 
-    if RENDER_FULL_WAFER:
-        for cx, cy in corner_positions:
+        if RENDER_FULL_WAFER:
+            for cx, cy in corner_positions:
+                # Adjust insertion point to compensate for CORNER_CHIP_SIZE/2 shift
+                adj_x = cx - CORNER_CHIP_SIZE / 2 - FIELD_SIZE
+                adj_y = cy - CORNER_CHIP_SIZE / 2 - FIELD_SIZE
+                insert_pt = w.chipSpace((adj_x, adj_y))
+                w.drawing.add(dxf.insert(corner_chip.ID, insert=insert_pt, layer=w.lyr(corner_chip.layer)))
+    else:
+        for idx, (cx, cy) in enumerate(corner_positions):
+            corner_chip = CornerChip11000um(w, f'CORNER_{CORNER_CHIP_SIZE}um_{CORNER_GRID_N}x{CORNER_GRID_N}_{idx}', w.defaultLayer)
+            corner_chip.save(w, drawCopyDXF=EXPORT_CORNER_CHIP_DXF and idx == 0, dicingBorder=False)
             # Adjust insertion point to compensate for CORNER_CHIP_SIZE/2 shift
             adj_x = cx - CORNER_CHIP_SIZE / 2 - FIELD_SIZE
             adj_y = cy - CORNER_CHIP_SIZE / 2 - FIELD_SIZE
             insert_pt = w.chipSpace((adj_x, adj_y))
-            w.drawing.add(dxf.insert(corner_chip.ID, insert=insert_pt, layer=w.lyr(corner_chip.layer)))
-else:
-    for idx, (cx, cy) in enumerate(corner_positions):
-        corner_chip = CornerChip11000um(w, f'CORNER_{CORNER_CHIP_SIZE}um_{CORNER_GRID_N}x{CORNER_GRID_N}_{idx}', w.defaultLayer)
-        corner_chip.save(w, drawCopyDXF=EXPORT_CORNER_CHIP_DXF and idx == 0, dicingBorder=False)
-        # Adjust insertion point to compensate for CORNER_CHIP_SIZE/2 shift
-        adj_x = cx - CORNER_CHIP_SIZE / 2 - FIELD_SIZE
-        adj_y = cy - CORNER_CHIP_SIZE / 2 - FIELD_SIZE
-        insert_pt = w.chipSpace((adj_x, adj_y))
-        if RENDER_FULL_WAFER:
-            w.drawing.add(dxf.insert(corner_chip.ID, insert=insert_pt, layer=w.lyr(corner_chip.layer)))
+            if RENDER_FULL_WAFER:
+                w.drawing.add(dxf.insert(corner_chip.ID, insert=insert_pt, layer=w.lyr(corner_chip.layer)))
 
-# Now that all chips are saved in the blocks section, optionally write the full wafer DXF
+# --- full wafer DXF (OPTICAL_ONLY mode)
 if RENDER_FULL_WAFER:
     w.populate()
     w.save()

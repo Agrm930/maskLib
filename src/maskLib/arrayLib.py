@@ -275,7 +275,7 @@ class Sweep3D:
 
     # ---- export ----------------------------------------------------------
 
-    def export_workbook(self, path):
+    def export_workbook(self, path, grid_nx=None, grid_ny=None, strict=True):
         '''
         Write an .xlsx workbook (requires openpyxl) with:
 
@@ -287,40 +287,47 @@ class Sweep3D:
                            chip, with a white->red min-to-max color gradient
                            so the sweep pattern is visible at a glance
 
-        Sheet names are the parameter names (truncated to Excel's 31-char
-        limit). Returns the path written.
+        Covers the reference grid by default; pass grid_nx/grid_ny (and
+        strict=False) to export a secondary chip's smaller grid, e.g. a
+        20 x 20 corner chip. Sheet names are the parameter names (truncated
+        to Excel's 31-char limit). Returns the path written.
         '''
         from openpyxl import Workbook
         from openpyxl.formatting.rule import ColorScaleRule
         from openpyxl.utils import get_column_letter
+
+        gx = self.grid_nx if grid_nx is None else grid_nx
+        gy = self.grid_ny if grid_ny is None else grid_ny
+
+        def lookup(ix, iy):
+            return self.field(ix, iy, grid_nx=gx, grid_ny=gy, strict=strict)
 
         pnames = self.param_names()
         wb = Workbook()
         ws = wb.active
         ws.title = 'parameters'
         ws.append(['label', 'ix', 'iy'] + pnames)
-        for ix in range(self.grid_nx):
-            for iy in range(self.grid_ny):
-                params, flabel = self.field(ix, iy)
+        for ix in range(gx):
+            for iy in range(gy):
+                params, flabel = lookup(ix, iy)
                 ws.append([flabel, ix, iy] + [float(params[p]) for p in pnames])
 
         def grid_sheet(title, cellvalue):
             '''new sheet laid out like the chip: columns = ix, rows = iy
             top-down (so the top spreadsheet row is the top of the chip)'''
             s = wb.create_sheet(title)
-            s.append(['iy\\ix'] + list(range(self.grid_nx)))
-            for iy in reversed(range(self.grid_ny)):
-                s.append([iy] + [cellvalue(ix, iy) for ix in range(self.grid_nx)])
+            s.append(['iy\\ix'] + list(range(gx)))
+            for iy in reversed(range(gy)):
+                s.append([iy] + [cellvalue(ix, iy) for ix in range(gx)])
             return s
 
-        grid_sheet('map', lambda ix, iy: self.field(ix, iy)[1])
+        grid_sheet('map', lambda ix, iy: lookup(ix, iy)[1])
 
         # one gradient-colored value map per swept parameter
-        data_range = 'B2:%s%d' % (get_column_letter(self.grid_nx + 1),
-                                  self.grid_ny + 1)
+        data_range = 'B2:%s%d' % (get_column_letter(gx + 1), gy + 1)
         for pname in pnames:
             s = grid_sheet(pname[:31],
-                           lambda ix, iy, p=pname: float(self.field(ix, iy)[0][p]))
+                           lambda ix, iy, p=pname: float(lookup(ix, iy)[0][p]))
             s.conditional_formatting.add(data_range, ColorScaleRule(
                 start_type='min', start_color='FFFFFFFF',
                 end_type='max', end_color='FFFF4444'))
