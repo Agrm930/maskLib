@@ -162,6 +162,7 @@ EBEAM_BASE_DOSES = {
     'BRIDGE':      500,
     'UNDERCUT':    200,
     'SHIFT':       400,
+    'LABELS':      600,   # field labels + legend (large features, lower dose)
 }
 
 sweep = Sweep3D(GRID_NX, GRID_NY, TILE_NX, TILE_NY,
@@ -285,10 +286,12 @@ def draw_field(chip, wafer, cx, cy, params, flabel):
         JunctionWithLeads(chip, tpos, params)
 
     # field label (tile letter + column + row, e.g. A0103) in the
-    # bottom-left corner, clear of the pads and shunt
-    chip.add_chip_label(flabel,
-                        (cx - FIELD_SIZE/2 + 50, cy - FIELD_SIZE/2 + 42),
-                        height=22, layer='LABELS')
+    # bottom-left corner, clear of the pads and shunt. LABELS is an ebeam
+    # layer, so skip it (like the junctions) on the optical-only wafer.
+    if DRAW_EBEAM_LAYERS:
+        chip.add_chip_label(flabel,
+                            (cx - FIELD_SIZE/2 + 50, cy - FIELD_SIZE/2 + 42),
+                            height=22, layer='LABELS')
 
 
 # ===============================================================================
@@ -331,7 +334,6 @@ LAYERS_OPTICAL_1 = [
 ]
 LAYERS_OPTICAL_2 = [
     ['TiW_Mark', 6],       # TiW marker crosses
-    ['LABELS', 2],         # field labels + sweep legend
 ]
 LAYERS_EBEAM = [
     ['LEADS', 1],          # base (undosed) ebeam layers; swept structures
@@ -340,6 +342,7 @@ LAYERS_EBEAM = [
     ['BRIDGE', 34],
     ['UNDERCUT', 36],
     ['SHIFT', 38],
+    ['LABELS', 2],         # field labels + sweep legend (ebeam: chiplet DXFs only, not the optical-only wafer)
 ]
 # per-dose ebeam layers from the sweep (e.g. BRIDGE_400 ... SMALLFINGER_1500)
 LAYERS_EBEAM_DOSES = [[name, 50 + k % 200] for k, name in enumerate(sweep.dose_layers())]
@@ -401,9 +404,11 @@ class Chiplet21000um(m.Chip):
                            params, flabel)
 
         # sweep legend in the bottom margin, below the field grid
-        for k, line in enumerate(sweep.legend_lines()):
-            self.add_chip_label(line, (CHIPLET_SIZE_x/2, 400 - 110*k),
-                                height=70, layer='LABELS')
+        # (LABELS is an ebeam layer: skipped on the optical-only wafer)
+        if DRAW_EBEAM_LAYERS:
+            for k, line in enumerate(sweep.legend_lines()):
+                self.add_chip_label(line, (CHIPLET_SIZE_x/2, 400 - 110*k),
+                                    height=70, layer='LABELS')
 
         # sweep workbook for the lab notebook (parameter table, label
         # minimap, and a gradient-colored value map per swept parameter)
@@ -465,9 +470,11 @@ class CornerChip11000um(m.Chip):
                            params, flabel)
 
         # sweep legend in the bottom margin
-        for k, line in enumerate(sweep.legend_lines()):
-            self.add_chip_label(line, (CORNER_CHIP_SIZE/2, 400 - 110*k),
-                                height=70, layer='LABELS')
+        # (LABELS is an ebeam layer: skipped on the optical-only wafer)
+        if DRAW_EBEAM_LAYERS:
+            for k, line in enumerate(sweep.legend_lines()):
+                self.add_chip_label(line, (CORNER_CHIP_SIZE/2, 400 - 110*k),
+                                    height=70, layer='LABELS')
 
         # corner-chip sweep workbook, covering only its own grid (20x20;
         # tile parameter values wrap around, matching what is drawn)
