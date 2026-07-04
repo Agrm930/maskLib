@@ -8,6 +8,9 @@ Edited by Agrim, 2026 (junction stack, centered tabs, corner-based
 coordinates, 3D parameter sweep via maskLib.arrayLib)
 """
 
+import time
+SCRIPT_START = time.time()
+
 import numpy as np
 
 import maskLib.MaskLib as m
@@ -83,14 +86,14 @@ TMON_SHUNT_DIST = 50       # Distance from pads to shunt in microns
 TMON_SHUNT_LENGTH = TMON_SEPARATION + TMON_PAD_HEIGHT  # Total shunt length in microns
 
 # Junction parameters (leads + Dolan junction drawn in the gap between the pads)
-# Lead/contact geometry follows TmonDoseArrayPrathu.py, scaled down to fit the
-# 130 micron pad separation (Prathu's wedge-to-wedge span of 180 assumed a 400 micron gap)
+# Each lead starts with a 'home plate' contact pad sitting on the transmon
+# pad edge, covering the contact tab slot cut into the pad; a wedge tapers
+# it down to the thin lead that runs to the junction.
 JJ_LEAD_WIDTH = 1            # Width of thin leads in microns
-JJ_CONTACT_WIDTH = 20        # Width of contact pads on the leads in microns
+JJ_CONTACT_WIDTH = 20        # Width of contact pads (home plates) in microns
 JJ_CONTACT_LENGTH = 10       # Length of contact pads in microns
 JJ_WEDGE_LENGTH = 10         # Length of wedge taper from contact pad to thin lead in microns
-JJ_WEDGE_TO_WEDGE = 40       # Distance between the two wedge tips in microns (must fit inside TMON_SEPARATION)
-JJ_PAD_OVERLAP = 20          # How far leads overlap into the big pads in microns
+JJ_PLATE_MARGIN = 1.5        # How far the home plate reaches past the tab slot into the pad in microns
 JJ_FINGER_LENGTH = 1.5       # Length of small/big fingers in microns
 JJ_SMALLFINGER_WIDTH = 0.140 # Width of small finger in microns
 JJ_BIGFINGER_WIDTH = 0.340   # Width of big finger in microns (small finger + 0.2)
@@ -189,10 +192,11 @@ print('Output name:', WAFER_NAME)
 # ===============================================================================
 def JunctionWithLeads(chip, pos, params=None):
     '''
-    Draw the junction stack in the gap between the transmon pads, following
-    TmonDoseArrayPrathu.py: a lead from each pad (thin line + contact pad +
-    wedge taper) meeting a Dolan junction (small finger, bridge, big finger,
-    with undercut and shift layers) centered in the gap.
+    Draw the junction stack in the gap between the transmon pads: from each
+    pad a 'home plate' contact pad covering the pad's contact tab slot,
+    tapering through a wedge into a thin lead that meets a Dolan junction
+    (small finger, bridge, big finger, with undercut and shift layers)
+    centered in the gap.
 
     pos is the same point passed to Transmon3DWithShunt (bottom-left corner
     of the top pad). Dimensions default to the JJ_* design parameters;
@@ -211,9 +215,18 @@ def JunctionWithLeads(chip, pos, params=None):
             geo[key] = params[pname]
 
     total_JJ_length = 2*geo['fingerL'] + geo['bridgeL']
-    wedge_to_JJ = JJ_WEDGE_TO_WEDGE/2 - total_JJ_length/2
-    lead_pad_to_contact = TMON_SEPARATION/2 - JJ_WEDGE_TO_WEDGE/2 - JJ_WEDGE_LENGTH - JJ_CONTACT_LENGTH + JJ_PAD_OVERLAP
-    assert lead_pad_to_contact > 0, 'Leads do not fit: shrink JJ_WEDGE_TO_WEDGE or contact/wedge lengths, or increase TMON_SEPARATION'
+
+    # The home plate sits on the pad edge, covering the contact tab slot cut
+    # into the pad (dims from JcalcTabDims, same defaults Transmon3DWithShunt
+    # uses for the tab): its flat end reaches JJ_PLATE_MARGIN past the slot
+    # into the pad, the rest sticks into the gap and tapers via the wedge to
+    # the thin lead running to the junction.
+    slot_depth, slot_halfwidth = JcalcTabDims(chip, pos)
+    plate_start = slot_depth + JJ_PLATE_MARGIN  # lead start, measured into the pad from its edge
+    assert JJ_CONTACT_WIDTH/2 > slot_halfwidth, 'Home plate too narrow to cover the tab slot: increase JJ_CONTACT_WIDTH'
+    assert JJ_CONTACT_LENGTH > plate_start, 'Home plate too short to cover the tab slot: increase JJ_CONTACT_LENGTH or reduce JJ_PLATE_MARGIN'
+    wedge_to_JJ = TMON_SEPARATION/2 + plate_start - JJ_CONTACT_LENGTH - JJ_WEDGE_LENGTH - total_JJ_length/2
+    assert wedge_to_JJ > 0, 'Leads do not fit: shrink contact/wedge lengths or increase TMON_SEPARATION'
 
     # chip.add() shifts objects with a .points attribute (like the transmon's
     # SolidPline pads) by chip.origin_offset, but not the plain
@@ -224,12 +237,12 @@ def JunctionWithLeads(chip, pos, params=None):
 
     xc = x0 + TMON_PAD_WIDTH/2  # center line of the pads
 
-    for side, ystart in (('top', y0 + JJ_PAD_OVERLAP),
-                         ('bottom', y0 - TMON_SEPARATION - JJ_PAD_OVERLAP)):
+    for side, ystart in (('top', y0 + plate_start),
+                         ('bottom', y0 - TMON_SEPARATION - plate_start)):
         leads_for_tmon_dosearray_custom(chip, m.Structure(chip, start=(xc, ystart), direction=0),
                                         toporbottom=side,
                                         layer=dose_layer('LEADS', params, 'leads_dose'),
-                                        leadLpadtocontact=lead_pad_to_contact, leadLcontacttoJJ=wedge_to_JJ,
+                                        leadLpadtocontact=0, leadLcontacttoJJ=wedge_to_JJ,
                                         leadW=JJ_LEAD_WIDTH, contactW=JJ_CONTACT_WIDTH,
                                         contactL=JJ_CONTACT_LENGTH, wedgeL=JJ_WEDGE_LENGTH)
 
@@ -492,14 +505,14 @@ class CornerChip11000um(m.Chip):
 # chip IDs carry each chip's own size and field grid (the wafer-name prefix
 # describes the main chiplet design; this suffix describes the chip itself)
 
-def export_ldt_for(chip):
+def export_ldt_for(fileName):
     '''Elionix layer dose table for one chip's ebeam job, named to match its
     DXF. Layer numbers come from the wafer layer table PLUS ONE: the DXF->GDS
     converter numbers layers 1-based (verified against a converted GDS:
     BASEMETAL table index 1 -> GDS layer 2, LEADS 7 -> 8, SHIFT 12 -> 13).
     Doses come from the sweep values plus EBEAM_BASE_DOSES for unswept
     families.'''
-    path = w.path + w.fileName + '_' + chip.ID + '.ldt'
+    path = w.path + fileName + '.ldt'
     export_ldt(path, sweep.ldt_entries(lambda name: w.layerNums[name] + 1, EBEAM_BASE_DOSES))
     print('Elionix dose table saved to', path)
 
@@ -517,9 +530,11 @@ if OPTICAL_ONLY or not GENERATE_CORNER_CHIP:
             w.setChipBuffer(Chiplet21000um(w, f'CHIPLET_{CHIPLET_SIZE_x}um_{GRID_NX}x{GRID_NY}_{i}', w.defaultLayer).save(w), i)
 
     # Save a standalone chiplet DXF + its ebeam dose table if requested
+    # (named exactly WAFER_NAME: only one chip DXF is generated per run, and
+    # the wafer name already fully describes it)
     if EXPORT_SAMPLE_CHIPLET_DXF and len(w.chips) > 1:
-        w.chips[1].save(w, drawCopyDXF=True, dicingBorder=False)
-        export_ldt_for(w.chips[1])
+        w.chips[1].save(w, drawCopyDXF=True, dicingBorder=False, fileName=w.fileName)
+        export_ldt_for(w.fileName)
 
 # --- corner chips: needed for the full wafer, or when they are the requested chip
 if OPTICAL_ONLY or GENERATE_CORNER_CHIP:
@@ -534,11 +549,15 @@ if OPTICAL_ONLY or GENERATE_CORNER_CHIP:
         (corner_distance, corner_distance),    # Top-right
     ]
 
+    # corner-chip DXF/ldt name: wafer name + corner-chip size (the wafer
+    # name's own size describes the main chiplet)
+    corner_name = w.fileName + '_CORNER_%gmm' % (CORNER_CHIP_SIZE / 1000)
+
     if REUSE_IDENTICAL_CHIPS:
         corner_chip = CornerChip11000um(w, f'CORNER_{CORNER_CHIP_SIZE}um_{CORNER_GRID_N}x{CORNER_GRID_N}', w.defaultLayer)
-        corner_chip.save(w, drawCopyDXF=EXPORT_CORNER_CHIP_DXF, dicingBorder=False)
+        corner_chip.save(w, drawCopyDXF=EXPORT_CORNER_CHIP_DXF, dicingBorder=False, fileName=corner_name)
         if EXPORT_CORNER_CHIP_DXF:
-            export_ldt_for(corner_chip)
+            export_ldt_for(corner_name)
 
         if RENDER_FULL_WAFER:
             for cx, cy in corner_positions:
@@ -550,9 +569,9 @@ if OPTICAL_ONLY or GENERATE_CORNER_CHIP:
     else:
         for idx, (cx, cy) in enumerate(corner_positions):
             corner_chip = CornerChip11000um(w, f'CORNER_{CORNER_CHIP_SIZE}um_{CORNER_GRID_N}x{CORNER_GRID_N}_{idx}', w.defaultLayer)
-            corner_chip.save(w, drawCopyDXF=EXPORT_CORNER_CHIP_DXF and idx == 0, dicingBorder=False)
+            corner_chip.save(w, drawCopyDXF=EXPORT_CORNER_CHIP_DXF and idx == 0, dicingBorder=False, fileName=corner_name)
             if EXPORT_CORNER_CHIP_DXF and idx == 0:
-                export_ldt_for(corner_chip)
+                export_ldt_for(corner_name)
             # Adjust insertion point to compensate for CORNER_CHIP_SIZE/2 shift
             adj_x = cx - CORNER_CHIP_SIZE / 2 - FIELD_SIZE
             adj_y = cy - CORNER_CHIP_SIZE / 2 - FIELD_SIZE
@@ -564,3 +583,5 @@ if OPTICAL_ONLY or GENERATE_CORNER_CHIP:
 if RENDER_FULL_WAFER:
     w.populate()
     w.save()
+
+print('Total runtime: %.1f s' % (time.time() - SCRIPT_START))

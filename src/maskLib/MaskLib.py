@@ -159,6 +159,13 @@ class Wafer:
         #ignore private vars
     
     def save(self):
+        # stamp the creation/update date into the DXF header ($TDCREATE /
+        # $TDUPDATE are stored as Julian dates; CAD programs show them as
+        # the drawing's creation / last-saved time)
+        import time
+        julian_now = time.time() / 86400.0 + 2440587.5
+        self.drawing.header['$TDCREATE'] = julian_now
+        self.drawing.header['$TDUPDATE'] = julian_now
         self.drawing.save()
         print('Saved as: '+ '\x1b[36m' + self.path + self.fileName + '.dxf'+'\x1b[0m')
     
@@ -576,11 +583,14 @@ class Chip:
             offset_points = [(point.x + offset_x, point.y + offset_y) for point in points]
             self.chipBlock.add(dxf.polyline(offset_points, layer=layer, flags=1))
 
-    def save(self, wafer, drawCopyDXF=False, dicingBorder=True, center=False, FRAME_LAYER=['703/0', 8, -1], MARKER_LAYER=['MARKERS', 5, -1]):
+    def save(self, wafer, drawCopyDXF=False, dicingBorder=True, center=False, FRAME_LAYER=['703/0', 8, -1], MARKER_LAYER=['MARKERS', 5, -1], fileName=None):
+        # fileName overrides the copy DXF's file name (default: wafer name + chip ID)
         wafer.drawing.blocks.add(self.chipBlock)
         if drawCopyDXF:
             # Make a copy DXF with only the chip
-            temp_wafer = Wafer(wafer.fileName + '_' + self.ID, wafer.path, 10, 10)
+            if fileName is None:
+                fileName = wafer.fileName + '_' + self.ID
+            temp_wafer = Wafer(fileName, wafer.path, 10, 10)
             # Height and width don't matter since the next line copies all settings
             temp_wafer.copyPropertiesFrom(wafer)
             temp_wafer.drawing.blocks.add(self.chipBlock)
