@@ -326,7 +326,8 @@ class Sweep3D:
 
     # ---- export ----------------------------------------------------------
 
-    def export_workbook(self, path, grid_nx=None, grid_ny=None, strict=True):
+    def export_workbook(self, path, grid_nx=None, grid_ny=None, strict=True,
+                        layer_dose_table=None):
         '''
         Write an .xlsx workbook (requires openpyxl) with:
 
@@ -337,6 +338,12 @@ class Sweep3D:
           one sheet per swept parameter -- its values laid out like the
                            chip, with a white->red min-to-max color gradient
                            so the sweep pattern is visible at a glance
+          'layer dose table' -- only if layer_dose_table is given: one row
+                           per DXF layer, (name, GDS layer number, whether
+                           it is written by ebeam / appears in the .ldt,
+                           dose). Pass rows of (name, gds, 'yes'/'no', dose);
+                           an optional 5th element (hex color like 'C6EFCE')
+                           fills the row for status highlighting.
 
         Covers the reference grid by default; pass grid_nx/grid_ny (and
         strict=False) to export a secondary chip's smaller grid, e.g. a
@@ -382,6 +389,21 @@ class Sweep3D:
             s.conditional_formatting.add(data_range, ColorScaleRule(
                 start_type='min', start_color='FFFFFFFF',
                 end_type='max', end_color='FFFF4444'))
+
+        if layer_dose_table is not None:
+            from openpyxl.styles import PatternFill
+            s = wb.create_sheet('layer dose table')
+            s.append(['layer', 'GDS layer', 'ebeam (in .ldt)', 'dose'])
+            for row in layer_dose_table:
+                color = row[4] if len(row) > 4 else None
+                s.append(list(row[:4]))
+                if color:
+                    fill = PatternFill(start_color=color, end_color=color,
+                                       fill_type='solid')
+                    for cell in s[s.max_row]:
+                        cell.fill = fill
+            s.column_dimensions['A'].width = 20
+
         wb.save(path)
         return path
 

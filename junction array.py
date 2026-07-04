@@ -373,6 +373,39 @@ w.init()
 #do dicing border (by default located on layer 'MARKERS', so let's put it on layer 'DICEBORDER' instead)
 w.DicingBorder(layer='DICEBORDER')
 
+def layer_dose_rows():
+    '''Rows for the 'layer dose table' xlsx sheet: every wafer layer with
+    its GDS layer number (table index + 1, same numbering as the .ldt),
+    whether it is written by ebeam (= appears in the .ldt), and its dose.
+    Built from the same sweep.ldt_entries call that generates the .ldt,
+    so the sheet always matches the actual dose table.
+
+    Rows are color-coded by status:
+      green  -- written by ebeam (in the .ldt)
+      yellow -- on the chiplet but not written by ebeam (optical or guide)
+      red    -- disabled/unused on the chiplet: DXF bookkeeping (0,
+                VIEWPORTS), wafer-level layers (DICEBORDER, Opt_Mark), and
+                base layers of swept dose families (their shapes all live
+                on the per-dose copies)'''
+    XLSX_GREEN, XLSX_YELLOW, XLSX_RED = 'C6EFCE', 'FFEB9C', 'FFC7CE'
+    OPTICAL_ON_CHIPLET = {'BASEMETAL', FRAME_LAYER, 'TiW_Mark'}
+
+    dose_by_gds = dict(sweep.ldt_entries(lambda name: w.layerNums[name] + 1,
+                                         EBEAM_BASE_DOSES))
+    rows = []
+    for name in w.layerNames:
+        gds = w.layerNums[name] + 1
+        if gds in dose_by_gds:
+            color = XLSX_GREEN
+        elif name in OPTICAL_ON_CHIPLET:
+            color = XLSX_YELLOW
+        else:
+            color = XLSX_RED
+        rows.append((name, gds,
+                     'yes' if gds in dose_by_gds else 'no',
+                     dose_by_gds.get(gds), color))
+    return rows
+
 #do optical markers
 #(note: mirrorX and mirrorY are true by default, but I've exposed them here to demonstrate how they work)
 doMirrored(MarkerCross, w, (0,45000),(500,500), 20,layer='Opt_Mark',mirrorX=True,mirrorY=True)
@@ -414,7 +447,7 @@ class Chiplet21000um(m.Chip):
         # minimap, and a gradient-colored value map per swept parameter)
         if EXPORT_SWEEP_MAP:
             xlsx_path = wafer.path + wafer.fileName + '_sweep_map.xlsx'
-            sweep.export_workbook(xlsx_path)
+            sweep.export_workbook(xlsx_path, layer_dose_table=layer_dose_rows())
             print('Sweep map saved to', xlsx_path)
 
         # Markers at four corners of the chiplet (placed once, outside field loop)
@@ -480,7 +513,8 @@ class CornerChip11000um(m.Chip):
         # tile parameter values wrap around, matching what is drawn)
         if EXPORT_SWEEP_MAP and GENERATE_CORNER_CHIP:
             xlsx_path = wafer.path + wafer.fileName + '_CORNER_%dx%d_sweep_map.xlsx' % (mx, my)
-            sweep.export_workbook(xlsx_path, grid_nx=mx, grid_ny=my, strict=False)
+            sweep.export_workbook(xlsx_path, grid_nx=mx, grid_ny=my, strict=False,
+                                  layer_dose_table=layer_dose_rows())
             print('Corner sweep map saved to', xlsx_path)
 
 
