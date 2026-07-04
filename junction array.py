@@ -164,7 +164,7 @@ EBEAM_BASE_DOSES = {
     'BRIDGE':      500,
     'UNDERCUT':    200,
     'SHIFT':       400,
-    'LABELS':      600,   # field labels + legend (large features, lower dose)
+    'LABELS':      600,   # sweep legend (large features, lower dose)
 }
 
 sweep = Sweep3D(GRID_NX, GRID_NY, TILE_NX, TILE_NY,
@@ -288,13 +288,13 @@ def draw_field(chip, wafer, cx, cy, params, flabel):
         JunctionWithLeads(chip, tpos, params)
 
     # field label (tile letter + column + row, e.g. A0103) in the
-    # bottom-left corner, clear of the pads and shunt. LABELS is an ebeam
-    # layer, so skip it (like the junctions) on the optical-only wafer.
+    # bottom-left corner, clear of the pads and shunt. FIELD_LABELS is an
+    # optical layer, so the labels are always drawn -- they appear on the
+    # optical-only full wafer too (unlike the ebeam sweep legend).
     # Block font: disjoint rectangles only, no nested outlines (donut-safe).
-    if DRAW_EBEAM_LAYERS:
-        add_block_label(chip, flabel,
-                        (cx - FIELD_SIZE/2 + 50, cy - FIELD_SIZE/2 + 42),
-                        height=22, layer='LABELS')
+    add_block_label(chip, flabel,
+                    (cx - FIELD_SIZE/2 + 50, cy - FIELD_SIZE/2 + 15.4),
+                    height=22, layer='FIELD_LABELS')
 
 
 # ===============================================================================
@@ -337,6 +337,7 @@ LAYERS_OPTICAL_1 = [
 ]
 LAYERS_OPTICAL_2 = [
     ['TiW_Mark', 6],       # TiW marker crosses
+    ['FIELD_LABELS', 7],   # per-field labels (e.g. A0103), written optically
 ]
 LAYERS_EBEAM = [
     ['LEADS', 1],          # base (undosed) ebeam layers; swept structures
@@ -345,7 +346,7 @@ LAYERS_EBEAM = [
     ['BRIDGE', 34],
     ['UNDERCUT', 36],
     ['SHIFT', 38],
-    ['LABELS', 2],         # field labels + sweep legend (ebeam: chiplet DXFs only, not the optical-only wafer)
+    ['LABELS', 2],         # sweep legend at the chiplet bottom (ebeam: chiplet DXFs only, not the optical-only wafer)
 ]
 # per-dose ebeam layers from the sweep (e.g. BRIDGE_400 ... SMALLFINGER_1500)
 LAYERS_EBEAM_DOSES = [[name, 50 + k % 200] for k, name in enumerate(sweep.dose_layers())]
@@ -391,7 +392,7 @@ def layer_dose_rows():
                 base layers of swept dose families (their shapes all live
                 on the per-dose copies)'''
     XLSX_GREEN, XLSX_YELLOW, XLSX_RED = 'C6EFCE', 'FFEB9C', 'FFC7CE'
-    OPTICAL_ON_CHIPLET = {'BASEMETAL', FRAME_LAYER, 'TiW_Mark'}
+    OPTICAL_ON_CHIPLET = {'BASEMETAL', FRAME_LAYER, 'TiW_Mark', 'FIELD_LABELS'}
 
     dose_by_gds = dict(sweep.ldt_entries(lambda name: w.layerNums[name] + 1,
                                          EBEAM_BASE_DOSES))
