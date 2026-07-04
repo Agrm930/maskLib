@@ -4,8 +4,9 @@
 Created on Thu Jun 17 13:52:03 2021
 
 @author: sasha
-Edited by Agrim, 2026 (junction stack, centered tabs, corner-based
-coordinates, 3D parameter sweep via maskLib.arrayLib)
+Edited by Agrim, with Claude (Claude Code), 2026 (junction stack, centered
+tabs, corner-based coordinates, 3D parameter sweep via maskLib.arrayLib,
+block-font labels via maskLib.blockFont)
 """
 
 import time
@@ -17,6 +18,7 @@ import maskLib.MaskLib as m
 from maskLib.arrayLib import Sweep3D, dose_layer, export_ldt
 from maskLib.junctionLib import setupJunctionLayers, JcalcTabDims, JContact_slot, Transmon3DWithShunt
 from maskLib.fluxoniumLib import smallJJ, leads_for_tmon_dosearray_custom
+from maskLib.blockFont import add_block_label
 from maskLib.Entities import SolidPline, RoundRect
 from maskLib.markerLib import MarkerSquare, MarkerCross
 from maskLib.utilities import doMirrored, cornerRound
@@ -288,10 +290,11 @@ def draw_field(chip, wafer, cx, cy, params, flabel):
     # field label (tile letter + column + row, e.g. A0103) in the
     # bottom-left corner, clear of the pads and shunt. LABELS is an ebeam
     # layer, so skip it (like the junctions) on the optical-only wafer.
+    # Block font: disjoint rectangles only, no nested outlines (donut-safe).
     if DRAW_EBEAM_LAYERS:
-        chip.add_chip_label(flabel,
-                            (cx - FIELD_SIZE/2 + 50, cy - FIELD_SIZE/2 + 42),
-                            height=22, layer='LABELS')
+        add_block_label(chip, flabel,
+                        (cx - FIELD_SIZE/2 + 50, cy - FIELD_SIZE/2 + 42),
+                        height=22, layer='LABELS')
 
 
 # ===============================================================================
@@ -440,8 +443,8 @@ class Chiplet21000um(m.Chip):
         # (LABELS is an ebeam layer: skipped on the optical-only wafer)
         if DRAW_EBEAM_LAYERS:
             for k, line in enumerate(sweep.legend_lines()):
-                self.add_chip_label(line, (CHIPLET_SIZE_x/2, 400 - 110*k),
-                                    height=70, layer='LABELS')
+                add_block_label(self, line, (CHIPLET_SIZE_x/2, 400 - 110*k),
+                                height=70, layer='LABELS')
 
         # sweep workbook for the lab notebook (parameter table, label
         # minimap, and a gradient-colored value map per swept parameter)
@@ -506,8 +509,8 @@ class CornerChip11000um(m.Chip):
         # (LABELS is an ebeam layer: skipped on the optical-only wafer)
         if DRAW_EBEAM_LAYERS:
             for k, line in enumerate(sweep.legend_lines()):
-                self.add_chip_label(line, (CORNER_CHIP_SIZE/2, 400 - 110*k),
-                                    height=70, layer='LABELS')
+                add_block_label(self, line, (CORNER_CHIP_SIZE/2, 400 - 110*k),
+                                height=70, layer='LABELS')
 
         # corner-chip sweep workbook, covering only its own grid (20x20;
         # tile parameter values wrap around, matching what is drawn)
