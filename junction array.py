@@ -28,6 +28,7 @@ FIELD_SIZE = 500        # Field size in microns
 FIELD_SAW = 0           # Spacing between fields (saw width) in microns
 CHIPLET_SIZE_x = 21000 + FIELD_SAW      # Large chiplet dimensions in microns
 CHIPLET_SIZE_y = 21000 + FIELD_SAW      # Large chiplet dimensions in microns
+WAFER_DIAMETER_NAME = '4in'             # key into m.waferDiameters (also used in the optical-only file name)
 
 # field grid dimensions (derived): 40 x 40 for the default sizes above
 FIELD_STEP = FIELD_SIZE + FIELD_SAW
@@ -166,14 +167,21 @@ sweep = Sweep3D(GRID_NX, GRID_NY, TILE_NX, TILE_NY,
 sweep.print_summary()
 
 # Output file names are built from the design parameters, so the DXF and
-# xlsx names always describe what was generated,
-# e.g. 'TmonJJArray_21mm_40x40_tile10x20_SizeDoseDose'
-DESIGN_NAME = 'TmonJJArray'
-WAFER_NAME = '%s_%gmm_%dx%d_tile%dx%d_%s' % (
-    DESIGN_NAME, CHIPLET_SIZE_x / 1000, GRID_NX, GRID_NY,
-    TILE_NX, TILE_NY, sweep.sweep_type())
+# xlsx names always describe what was generated. Only DESIGN_NAME is
+# hardcoded (change it freely); everything after it is auto-populated.
+DESIGN_NAME = 'ShuntedJJArray'
 if OPTICAL_ONLY:
-    WAFER_NAME += '_opticalOnly'
+    # Full-wafer optical layout check: the per-chiplet sweep detail (grid,
+    # tile counts, sweep type) is irrelevant here, so name it by the wafer
+    # diameter only, e.g. 'ShuntedJJArray_4in_opticalOnly'
+    WAFER_NAME = '%s_%s_opticalOnly' % (DESIGN_NAME, WAFER_DIAMETER_NAME)
+else:
+    # Standalone chiplet: describe the sweep as steps-per-axis in
+    # col x row x tile order, matching the sweep_type words,
+    # e.g. 'ShuntedJJArray_21mm_10x20x8_SizeDoseDose'
+    WAFER_NAME = '%s_%gmm_%dx%dx%d_%s' % (
+        DESIGN_NAME, CHIPLET_SIZE_x / 1000,
+        sweep.tile_nx, sweep.tile_ny, sweep.n_tiles, sweep.sweep_type())
 print('Output name:', WAFER_NAME)
 
 # ===============================================================================
@@ -274,7 +282,7 @@ def draw_field(chip, wafer, cx, cy, params, flabel):
 # wafer setup
 # ===============================================================================
 
-w = m.Wafer(WAFER_NAME,'DXF/',CHIPLET_SIZE_x,CHIPLET_SIZE_y,padding=1500,waferDiameter=m.waferDiameters['4in'],sawWidth=500,singleChipColumn=False, centerChip=False, frame=True, markers=False
+w = m.Wafer(WAFER_NAME,'DXF/',CHIPLET_SIZE_x,CHIPLET_SIZE_y,padding=1500,waferDiameter=m.waferDiameters[WAFER_DIAMETER_NAME],sawWidth=500,singleChipColumn=False, centerChip=False, frame=True, markers=False
 )
     #set wafer properties
     # w.frame: draw frame layer?
@@ -516,7 +524,7 @@ if OPTICAL_ONLY or not GENERATE_CORNER_CHIP:
 # --- corner chips: needed for the full wafer, or when they are the requested chip
 if OPTICAL_ONLY or GENERATE_CORNER_CHIP:
     # Calculate corner positions (at ~55% of wafer radius, at 45 degrees)
-    wafer_radius = m.waferDiameters['4in'] / 2
+    wafer_radius = m.waferDiameters[WAFER_DIAMETER_NAME] / 2
     corner_distance = wafer_radius * 0.55
 
     corner_positions = [
