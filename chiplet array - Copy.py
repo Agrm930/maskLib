@@ -4,6 +4,7 @@
 Created on Thu Jun 17 13:52:03 2021
 
 @author: sasha
+@author: GitHub Copilot
 """
 
 #Run in terminal cd /Users/eddiemarici/Desktop/Masklib/maskLib && PYTHONPATH=/Users/eddiemarici/Desktop/Masklib python3 "DXF/3DMM_Rutgers1_Weak_Coupled_Transmon (1).py" 2>&1

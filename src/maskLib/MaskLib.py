@@ -303,10 +303,17 @@ class Wafer:
         if center:
             self.chipPts =[[-self.chipX/2,-self.chipY/2]]
         else:
-            self.chipPts =[[0,0]]
+            # anchor the chip's bottom-left corner exactly at the DXF origin:
+            # writeChip shifts every insert by +sawWidth/2 (chipSpace), which
+            # centers a chip in its dicing cell on the full wafer but is an
+            # unwanted offset in a standalone single-chip DXF
+            self.chipPts =[[-self.sawWidth/2,-self.sawWidth/2]]
             
-        #setup the default chip
-        self.setDefaultChip()
+        # NOTE: no setDefaultChip() here -- Chip.save() sets the real chip as
+        # default right after initChipOnly. Creating a BLANK default here only
+        # polluted the standalone DXF with an unused CHIP_BLANK block whose
+        # frame rectangle had the parent wafer's chip size, which showed up as
+        # a phantom oversized outline in viewers that display all blocks (KLayout).
 
         #setup the viewport
         self.drawing.add_vport('*ACTIVE',ucs_icon=0,circle_zoom=1000,grid_on=1,center_point=(0,0),aspect_ratio=2*(max(self.chipX,self.chipY)))

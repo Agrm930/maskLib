@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Created on Thu Jun 17 13:52:03 2021
+Created on Thu Jul 2 2026
 
-@author: sasha
 Edited by Agrim, with Claude (Claude Code), 2026 (junction stack, centered
 tabs, corner-based coordinates, 3D parameter sweep via maskLib.arrayLib,
 block-font labels via maskLib.blockFont)
+
+todo: ldt missing layers, 
 """
 
 import time
