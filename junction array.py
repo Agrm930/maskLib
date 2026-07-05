@@ -17,7 +17,8 @@ import numpy as np
 
 import maskLib.MaskLib as m
 from maskLib.arrayLib import Sweep3D, dose_layer
-from maskLib.layerDoseTable import layer_dose_rows as ldt_rows, export_ldt_array
+from maskLib.layerDoseTable import layer_dose_rows as ldt_rows, export_ldt_array, gds_layer_number
+from maskLib.gdsExport import dxf_to_gds
 from maskLib.junctionLib import setupJunctionLayers, JcalcTabDims, JContact_slot, Transmon3DWithShunt
 from maskLib.fluxoniumLib import smallJJ, leads_for_tmon_dosearray_custom
 from maskLib.blockFont import add_block_label
@@ -67,6 +68,8 @@ OPTICAL_ONLY = False
 GENERATE_CORNER_CHIP = False
 
 REUSE_IDENTICAL_CHIPS = True       # Reuse one generated block for repeated chiplets/corner chips
+EXPORT_GDS = True                  # Also convert the standalone chip DXF to .gds (KLayout module),
+                                   # with GDS layer numbers guaranteed to match the .ldt
 
 # derived output flags -- set the two workflow toggles above, not these
 RENDER_FULL_WAFER = OPTICAL_ONLY
@@ -535,6 +538,13 @@ def export_ldt_for(fileName):
     yellow layers to unselect in Elionix CONV -- see maskLib.layerDoseTable)'''
     export_ldt_array(w.path + fileName + '.ldt', w, sweep,
                      EBEAM_BASE_DOSES, OPTICAL_ON_CHIPLET)
+    if EXPORT_GDS:
+        # convert the chip DXF just saved to GDS; layer numbers come from
+        # the wafer layer table, so GDS and .ldt always agree
+        t0 = time.time()
+        path = dxf_to_gds(w.path + fileName + '.dxf', w.path + fileName + '.gds',
+                          {name: gds_layer_number(w, name) for name in w.layerNames})
+        print('GDS saved to %s (%.1f s)' % (path, time.time() - t0))
 
 # --- main chiplet: needed for the full wafer, or when it is the requested chip
 if OPTICAL_ONLY or not GENERATE_CORNER_CHIP:

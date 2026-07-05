@@ -14,7 +14,7 @@ Use the local virtualenv at `masklib/` (Python 3.14, maskLib already installed i
 masklib\Scripts\python.exe <script.py>
 ```
 
-Do not install packages into the global Python — use `masklib\Scripts\pip.exe`. Core dependencies: `dxfwrite` (the main drawing engine), `numpy`, `matplotlib`, `ezdxf`; optional: `gdspy`, `opencv-python`. `setup_env.sh` documents an alternative conda-based setup.
+Do not install packages into the global Python — use `masklib\Scripts\pip.exe`. Core dependencies: `dxfwrite` (the main drawing engine), `numpy`, `matplotlib`, `ezdxf`, `klayout` (DXF→GDS conversion in `maskLib.gdsExport`); optional: `gdspy`, `opencv-python`. `setup_env.sh` documents an alternative conda-based setup.
 
 ## Running and verifying
 
