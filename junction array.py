@@ -68,8 +68,9 @@ OPTICAL_ONLY = False
 GENERATE_CORNER_CHIP = False
 
 REUSE_IDENTICAL_CHIPS = True       # Reuse one generated block for repeated chiplets/corner chips
-EXPORT_GDS = True                  # Also convert the standalone chip DXF to .gds (KLayout module),
-                                   # with GDS layer numbers guaranteed to match the .ldt
+EXPORT_GDS = True                  # Also convert DXF output to .gds (KLayout module). Chip mode:
+                                   # one .gds matching the .ldt numbering. Optical-only mode: one
+                                   # .gds per photolith step (OPT1/OPT2), no guide layers
 
 # derived output flags -- set the two workflow toggles above, not these
 RENDER_FULL_WAFER = OPTICAL_ONLY
@@ -613,5 +614,21 @@ if OPTICAL_ONLY or GENERATE_CORNER_CHIP:
 if RENDER_FULL_WAFER:
     w.populate()
     w.save()
+
+    # one GDS per photolithography step (no guide/bookkeeping layers, no
+    # doses -- optical masks need neither an .ldt nor the sweep xlsx).
+    # Opt_Mark alignment marks are shared by both steps, so they go in both.
+    if EXPORT_GDS:
+        gds_nums = {name: gds_layer_number(w, name) for name in w.layerNames}
+        for tag, mask_layers in (
+                ('OPT1', [l[0] for l in LAYERS_OPTICAL_1]),
+                ('OPT2', [l[0] for l in LAYERS_OPTICAL_2] + ['Opt_Mark'])):
+            t0 = time.time()
+            gds_path = dxf_to_gds(w.path + w.fileName + '.dxf',
+                                  w.path + w.fileName + '_' + tag + '.gds',
+                                  gds_nums, keep_layers=mask_layers)
+            print('%s mask GDS saved to %s (%.1f s)\n  layers: %s'
+                  % (tag, gds_path, time.time() - t0,
+                     ', '.join('%s (gds %d)' % (n, gds_nums[n]) for n in mask_layers)))
 
 print('Total runtime: %.1f s' % (time.time() - SCRIPT_START))

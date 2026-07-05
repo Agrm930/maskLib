@@ -18,7 +18,7 @@ vanish in conversion automatically.
 """
 
 
-def dxf_to_gds(dxf_path, gds_path, gds_layer_numbers):
+def dxf_to_gds(dxf_path, gds_path, gds_layer_numbers, keep_layers=None):
     '''
     Convert a DXF file to GDS, renumbering layers by name.
 
@@ -28,6 +28,10 @@ def dxf_to_gds(dxf_path, gds_path, gds_layer_numbers):
                          wafer build it as
                          {name: gds_layer_number(wafer, name)
                           for name in wafer.layerNames}
+    keep_layers       -- optional set of layer names; if given, every other
+                         layer is dropped from the GDS. Use to split one
+                         DXF into per-mask GDS files (e.g. one per
+                         photolithography step).
 
     Layer names found in the DXF but missing from the mapping are left to
     KLayout's automatic numbering, with a loud warning -- their numbers
@@ -37,6 +41,12 @@ def dxf_to_gds(dxf_path, gds_path, gds_layer_numbers):
 
     layout = kdb.Layout()
     layout.read(dxf_path)
+
+    if keep_layers is not None:
+        keep = set(keep_layers)
+        for i in list(layout.layer_indexes()):
+            if layout.get_info(i).name not in keep:
+                layout.delete_layer(i)
 
     unmapped = []
     for i in layout.layer_indexes():
