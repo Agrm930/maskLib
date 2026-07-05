@@ -85,8 +85,6 @@ EXPORT_SWEEP_MAP = not OPTICAL_ONLY
 # Transmon3DWithShunt parameters (scaled to fit 500 micron fields)
 TMON_PAD_WIDTH = 200       # Width of transmon pads in microns
 TMON_PAD_HEIGHT = 100      # Height of transmon pads in microns
-TMON_LEAD_WIDTH = 20       # Width of leads in microns
-TMON_LEAD_HEIGHT = 100     # Height of leads in microns
 TMON_PAD_RADIUS = 10       # Radius of pad corners in microns
 TMON_SEPARATION = 130      # Separation between pads in microns
 TMON_SHUNT_WIDTH = 5       # Width of shunt line in microns
@@ -97,15 +95,26 @@ TMON_SHUNT_LENGTH = TMON_SEPARATION + TMON_PAD_HEIGHT  # Total shunt length in m
 # Each lead starts with a 'home plate' contact pad sitting on the transmon
 # pad edge, covering the contact tab slot cut into the pad; a wedge tapers
 # it down to the thin lead that runs to the junction.
+#
+# The home plate is DERIVED from the tab slot (dims from JcalcTabDims, same
+# defaults Transmon3DWithShunt uses to cut the slot): it covers the slot
+# plus the margins below. Change the margins, not the plate size.
+SLOT_DEPTH, SLOT_HALFWIDTH = JcalcTabDims(None, (0, 0))  # 6.5, 6.5 for the default tab
+
 JJ_LEAD_WIDTH = 1            # Width of thin leads in microns
-JJ_CONTACT_WIDTH = 20        # Width of contact pads (home plates) in microns
-JJ_CONTACT_LENGTH = 10       # Length of contact pads in microns
-JJ_WEDGE_LENGTH = 10         # Length of wedge taper from contact pad to thin lead in microns
 JJ_PLATE_MARGIN = 1.5        # How far the home plate reaches past the tab slot into the pad in microns
+JJ_PLATE_SIDE_MARGIN = 3.5   # Home plate overhang past the slot on each side in microns
+JJ_PLATE_STICKOUT = 2        # How far the home plate sticks out of the pad into the gap in microns
+JJ_CONTACT_WIDTH = 2 * (SLOT_HALFWIDTH + JJ_PLATE_SIDE_MARGIN)          # home plate width (20)
+JJ_CONTACT_LENGTH = SLOT_DEPTH + JJ_PLATE_MARGIN + JJ_PLATE_STICKOUT    # home plate length (10)
+JJ_WEDGE_LENGTH = JJ_CONTACT_LENGTH  # Wedge taper as long as the home plate (10)
+
 JJ_FINGER_LENGTH = 1.5       # Length of small/big fingers in microns
 JJ_SMALLFINGER_WIDTH = 0.140 # Width of small finger in microns
-JJ_BIGFINGER_WIDTH = 0.340   # Width of big finger in microns (small finger + 0.2)
-JJ_BRIDGE_WIDTH = 0.840      # Width of bridge in microns (small finger + 0.7)
+JJ_BIGFINGER_EXTRA = 0.200   # Big finger is small finger + this in microns
+# (round: float addition leaves 1e-17 noise, e.g. 0.14+0.2=0.34000000000000004)
+JJ_BIGFINGER_WIDTH = round(JJ_SMALLFINGER_WIDTH + JJ_BIGFINGER_EXTRA, 9)   # 0.340
+JJ_BRIDGE_WIDTH = 0.840      # Width of bridge in microns
 JJ_BRIDGE_LENGTH = 0.250     # Length of bridge in microns
 JJ_UNDERCUT = 0.2            # Undercut width in microns
 
@@ -130,9 +139,10 @@ JJ_UNDERCUT = 0.2            # Undercut width in microns
 TILE_NX = 10   # tile size in fields; must evenly divide the chiplet field grid
 TILE_NY = 20
 
+SWEEP_SMALLFINGER_START = 0.100
 SWEEP_COL = {                                # 10 steps along x in each tile
-    'smallfinger_width': (0.100, 0.010),     # 0.10 -> 0.19 um
-    'bigfinger_width':   (0.300, 0.010),     # locked to smallfinger + 0.2
+    'smallfinger_width': (SWEEP_SMALLFINGER_START, 0.010),                     # 0.10 -> 0.19 um
+    'bigfinger_width':   (SWEEP_SMALLFINGER_START + JJ_BIGFINGER_EXTRA, 0.010),# locked to smallfinger + JJ_BIGFINGER_EXTRA
 }
 SWEEP_ROW = {                                # 20 steps along y in each tile
     'bridge_dose': (400, 40),                # 400 -> 1160
@@ -281,12 +291,12 @@ def draw_field(chip, wafer, cx, cy, params, flabel):
     tpos = (cx - TMON_PAD_WIDTH/2, cy + TMON_SEPARATION/2)
     Transmon3DWithShunt(chip, tpos,
                         padw=TMON_PAD_WIDTH, padh=TMON_PAD_HEIGHT,
-                        leadw=TMON_LEAD_WIDTH, leadh=TMON_LEAD_HEIGHT,
+                        leadw=0,   # WithShunt draws no leads; leadw only offsets the tab slot
                         padradius=TMON_PAD_RADIUS,
                         separation=TMON_SEPARATION, shunt=True,
                         shunt_width=TMON_SHUNT_WIDTH, shunt_dist=TMON_SHUNT_DIST,
                         shunt_length=TMON_SHUNT_LENGTH, shunt_side='left', flipped=True,
-                        tab=True, tab_shift_x=TMON_PAD_WIDTH/2 - TMON_LEAD_WIDTH/2,
+                        tab=True, tab_shift_x=TMON_PAD_WIDTH/2,   # tab slot centered on the pad
                         layer=wafer.lyr(dose_layer(METAL_LAYER, params, 'pads_dose')))
 
     # Leads and Dolan junction in the pad gap (ebeam structures)
