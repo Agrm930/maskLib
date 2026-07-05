@@ -111,30 +111,6 @@ def dose_layer(base, params, dose_name):
     return base if v is None else '%s_%s' % (base, fmt_value(v))
 
 
-def export_ldt(path, entries):
-    '''
-    Write an Elionix layer dose table (.ldt) for ebeam lithography.
-
-    entries: iterable of (layer_number, dose) pairs. layer_number is the
-    numeric layer the DXF layer becomes after GDS conversion (= its index
-    in the wafer layer table, wafer.layerNums[name]). The dose is written
-    divided by 1000 with 3 decimals, per the Elionix format:
-
-        Dosetable V1.0
-        Dose Assignment by Layer
-        (2 ,   0.400)
-        ...
-
-    Returns the path written.
-    '''
-    with open(path, 'w') as f:
-        f.write('\nDosetable V1.0\nDose Assignment by Layer\n')
-        for num, dose in sorted(entries):
-            f.write('(%d ,   %.3f)\n' % (num, dose / 1000.0))
-        f.write('\n')
-    return path
-
-
 class Sweep3D:
     '''
     3D parameter sweep over a tiled field grid (see module docstring).
@@ -237,7 +213,8 @@ class Sweep3D:
 
     def ldt_entries(self, layer_number, base_doses=None):
         '''
-        (layer_number, dose) pairs for an Elionix dose table (see export_ldt).
+        (layer_number, dose) pairs for an Elionix dose table
+        (see maskLib.layerDoseTable.export_ldt).
 
         layer_number -- function mapping a layer NAME to its numeric layer,
                         e.g.  lambda name: wafer.layerNums[name]

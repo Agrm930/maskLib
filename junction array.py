@@ -16,7 +16,8 @@ SCRIPT_START = time.time()
 import numpy as np
 
 import maskLib.MaskLib as m
-from maskLib.arrayLib import Sweep3D, dose_layer, export_ldt
+from maskLib.arrayLib import Sweep3D, dose_layer
+from maskLib.layerDoseTable import layer_dose_rows as ldt_rows, export_ldt_array
 from maskLib.junctionLib import setupJunctionLayers, JcalcTabDims, JContact_slot, Transmon3DWithShunt
 from maskLib.fluxoniumLib import smallJJ, leads_for_tmon_dosearray_custom
 from maskLib.blockFont import add_block_label
@@ -378,38 +379,15 @@ w.init()
 #do dicing border (by default located on layer 'MARKERS', so let's put it on layer 'DICEBORDER' instead)
 w.DicingBorder(layer='DICEBORDER')
 
+# layers drawn on the chiplet but written optically / kept for reference --
+# the 'yellow' set for maskLib.layerDoseTable: in the GDS but not in the
+# .ldt, so they get unselected in the Elionix CONV software
+OPTICAL_ON_CHIPLET = {'BASEMETAL', FRAME_LAYER, 'TiW_Mark', 'FIELD_LABELS'}
+
 def layer_dose_rows():
-    '''Rows for the 'layer dose table' xlsx sheet: every wafer layer with
-    its GDS layer number (table index + 1, same numbering as the .ldt),
-    whether it is written by ebeam (= appears in the .ldt), and its dose.
-    Built from the same sweep.ldt_entries call that generates the .ldt,
-    so the sheet always matches the actual dose table.
-
-    Rows are color-coded by status:
-      green  -- written by ebeam (in the .ldt)
-      yellow -- on the chiplet but not written by ebeam (optical or guide)
-      red    -- disabled/unused on the chiplet: DXF bookkeeping (0,
-                VIEWPORTS), wafer-level layers (DICEBORDER, Opt_Mark), and
-                base layers of swept dose families (their shapes all live
-                on the per-dose copies)'''
-    XLSX_GREEN, XLSX_YELLOW, XLSX_RED = 'C6EFCE', 'FFEB9C', 'FFC7CE'
-    OPTICAL_ON_CHIPLET = {'BASEMETAL', FRAME_LAYER, 'TiW_Mark', 'FIELD_LABELS'}
-
-    dose_by_gds = dict(sweep.ldt_entries(lambda name: w.layerNums[name] + 1,
-                                         EBEAM_BASE_DOSES))
-    rows = []
-    for name in w.layerNames:
-        gds = w.layerNums[name] + 1
-        if gds in dose_by_gds:
-            color = XLSX_GREEN
-        elif name in OPTICAL_ON_CHIPLET:
-            color = XLSX_YELLOW
-        else:
-            color = XLSX_RED
-        rows.append((name, gds,
-                     'yes' if gds in dose_by_gds else 'no',
-                     dose_by_gds.get(gds), color))
-    return rows
+    '''color-coded rows for the xlsx 'layer dose table' sheet (see
+    maskLib.layerDoseTable for the classification rules)'''
+    return ldt_rows(w, sweep, EBEAM_BASE_DOSES, OPTICAL_ON_CHIPLET)
 
 #do optical markers
 #(note: mirrorX and mirrorY are true by default, but I've exposed them here to demonstrate how they work)
@@ -552,15 +530,11 @@ class CornerChip11000um(m.Chip):
 # describes the main chiplet design; this suffix describes the chip itself)
 
 def export_ldt_for(fileName):
-    '''Elionix layer dose table for one chip's ebeam job, named to match its
-    DXF. Layer numbers come from the wafer layer table PLUS ONE: the DXF->GDS
-    converter numbers layers 1-based (verified against a converted GDS:
-    BASEMETAL table index 1 -> GDS layer 2, LEADS 7 -> 8, SHIFT 12 -> 13).
-    Doses come from the sweep values plus EBEAM_BASE_DOSES for unswept
-    families.'''
-    path = w.path + fileName + '.ldt'
-    export_ldt(path, sweep.ldt_entries(lambda name: w.layerNums[name] + 1, EBEAM_BASE_DOSES))
-    print('Elionix dose table saved to', path)
+    '''Elionix dose table for one chip's ebeam job, named to match its DXF
+    (doses from the sweep values + EBEAM_BASE_DOSES; also prints which
+    yellow layers to unselect in Elionix CONV -- see maskLib.layerDoseTable)'''
+    export_ldt_array(w.path + fileName + '.ldt', w, sweep,
+                     EBEAM_BASE_DOSES, OPTICAL_ON_CHIPLET)
 
 # --- main chiplet: needed for the full wafer, or when it is the requested chip
 if OPTICAL_ONLY or not GENERATE_CORNER_CHIP:
