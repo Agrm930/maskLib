@@ -1,75 +1,51 @@
-# CLAUDE.md — maskLib fork (Eddie)
+# CLAUDE.md
 
-## What this repo is
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-A fork of `agrm930/masklib`, a Python toolkit for superconducting device chip layout
-and EBL mask design. Output is primarily DXF (via `dxfwrite`-style entity calls), with
-downstream conversion to GDSII for a Heidelberg DWL 66+ laser writer. Used for CPS/CPW
-transmission line structures, double-Y baluns, resonators, and related microwave
-geometry.
+## What this is
 
-- `origin` = my fork; `upstream` = `agrm930/masklib`. Keep `main` a clean mirror of
-  upstream; all custom work goes on `eddie-dev` (or feature branches off it).
-- Custom extensions and scripts live in this fork. Do not assume file layout matches
-  upstream exactly.
+maskLib is a Python library for drawing superconducting qubit/circuit mask designs and writing them out as DXF files. All dimensions are in microns. This folder is a downloaded snapshot, **not a git repository**.
 
-## Environment rules (important — history of split-brain issues)
+## Environment
 
-- This project uses a local venv at `.venv/`. **Before running any `pip install`,
-  verify both `which python` and `which pip` resolve inside `.venv/`.** pyenv shims
-  have previously hijacked `python` after venv activation, causing pip to write
-  metadata into the venv while module files landed in pyenv's site-packages. If the
-  two `which` results disagree, stop and fix the environment before installing.
-- maskLib must be installed in **editable mode** (`pip install -e .`) from this clone.
-  Never install maskLib from any other path.
-- There are other copies of maskLib on the network (NAS-hosted) that have caused
-  import shadowing before. After any environment change, sanity-check with:
-  `python -c "import maskLib; print(maskLib.__file__)"` — the printed path must be
-  inside this repo. If it isn't, do not proceed; diagnose sys.path/shadowing first.
-- Do not add `sys.path` hacks to make imports work. Fix the install instead.
-- Keep `.venv/` in `.gitignore`. Never commit environment directories or generated
-  DXF/GDS output unless explicitly asked.
+Use the local virtualenv at `masklib/` (Python 3.14, maskLib already installed in editable mode):
 
-## Version pinning
+```
+masklib\Scripts\python.exe <script.py>
+```
 
-- Declare loose dependencies in `pyproject.toml`; keep `requirements.txt` as a frozen
-  lockfile (`pip freeze`). Update the lockfile deliberately, not as a side effect.
-- Related projects in my stack are sensitive to version drift (e.g., pyEPR work pins
-  numpy 1.26.4 and pandas 2.0.3). Before bumping numpy/pandas/shapely here, check it
-  won't break interop with scripts shared across projects.
+Do not install packages into the global Python — use `masklib\Scripts\pip.exe`. Core dependencies: `dxfwrite` (the main drawing engine), `numpy`, `matplotlib`, `ezdxf`, `klayout` (DXF→GDS conversion in `maskLib.gdsExport`); optional: `gdspy`, `opencv-python`. `setup_env.sh` documents an alternative conda-based setup.
 
-## maskLib API patterns
+## Running and verifying
 
-- Entities are added to chips via `self.add(dxf.entity(...))` — follow existing
-  patterns in the codebase rather than inventing new drawing paths.
-- Layer selection goes through `wafer.lyr()`; respect the existing layer-management
-  conventions.
-- CPW gap geometry uses an **XOR layer strategy**: gaps are drawn on a dedicated layer
-  and boolean-subtracted in KLayout. Don't "simplify" this into direct subtraction in
-  Python — the XOR-in-KLayout step is intentional.
-- Positive-draw CPW functions take explicit ground plane widths; keep that convention
-  for new primitives.
+There is no test suite or linter. Verify changes by running an example script and checking that the DXF output is generated without errors:
 
-## Output / fabrication constraints
+```
+masklib\Scripts\python.exe example\CPWResonatorExample.py
+```
 
-- The Heidelberg DWL 66+ GDSII converter **rejects single-vertex PATH elements**.
-  Any code path that could emit degenerate (zero-length / single-vertex) paths must
-  guard against it. When generating or cleaning GDS files, check for and remove these.
-- Preserve exact dimensions. Never silently round, rescale, or "clean up" coordinates
-  in geometry code — micron-level and sub-micron features are load-bearing.
-- When modifying drawing functions, prefer adding a test/demo script that renders the
-  primitive to DXF over asserting correctness from code reading alone.
+Scripts write `.dxf` files to a path given when constructing the `Wafer` (usually `DXF/`). Root-level scripts (`TmonDoseArrayPrathu.py`, `junction array.py`, etc.) are personal design scripts; `example/` holds the canonical usage examples (duplicated under `src/maskLib/example/`).
 
-## Style and workflow preferences
+## Architecture
 
-- Ask before large refactors; prefer plan mode for multi-file changes.
-- Small, focused commits with descriptive messages.
-- When a geometry function changes, note in the commit message whether output DXF for
-  existing designs is expected to change.
+The package lives in `src/maskLib/` (setuptools src layout, `pip install -e .`).
 
-## Future direction
+Core object model in `MaskLib.py`:
+- **`Wafer`** — top-level drawing: owns the dxfwrite drawing, layer setup (`SetupLayers`), chip grid layout, and dicing borders. Typical script flow: create `Wafer` → `SetupLayers([...])` → `w.init()` → `w.DicingBorder()` → define/draw chips → `w.populate()` → `w.save()`.
+- **`Chip`** — one chip design; subclasses define standard sizes/launcher positions (`Chip7mm`, `Chip10mm`, `ChipLL_*`). A chip carries a `defaults` dict (e.g. `{'w','s','radius','r_out','r_ins','curve_pts'}`) that component functions fall back on for CPW width, gap, bend radius, etc. `chip.save(wafer, ...)` registers it with the wafer.
+- **`Structure`** — a drawing cursor (position + direction). Component functions take `(chip, structure, ...)` and advance the structure as they draw, so calls chain: `CPW_launcher(...)` → `CPW_straight(...)` → `CPW_bend(...)` → `CPW_wiggles(...)`. Chips pre-define structures at launcher positions in `self.structures`.
 
-- gdsfactory may be added to this workflow (as a sibling project, not inside this
-  repo). If asked to integrate: it works natively in GDSII, so it may eventually
-  replace the DXF→converter step. Check numpy pin compatibility before installing it
-  into this venv.
+Component libraries build on this: `microwaveLib.py` (CPW transmission lines — the largest), `qubitLib.py`, `junctionLib.py`, `resonatorLib.py`, `fluxoniumLib.py`, `dcLib.py`, `markerLib.py`, `mmWaveLib.py`. Low-level shape entities (e.g. `SolidPline`, `SkewRect`) are in `Entities.py`; geometry helpers (`curveAB`, `cornerRound`, `doMirrored`, `transformedQuadrants`) in `utilities.py`. `arrayLib.py` provides `Sweep3D`, the 3D parameter-sweep engine for dose/geometry arrays (tiled field grids, auto-generated per-dose layers, field labels like `A0103`, xlsx export with per-parameter gradient maps) — see `junction array.py` for usage.
+
+Drawing engine notes:
+- Primary engine is `dxfwrite`; modules set `const.POLYLINE_3D_POLYLINE = 0` at import to force 2D polylines — keep that when adding modules.
+- `ezdxf` is used secondarily (text-to-path, DXF reading).
+- Shapes are drawn twice conceptually: outline (frame) and solid fill, controlled by the wafer's `frame`/`solid`/`multiLayer` flags and per-call `bgcolor`.
+
+## Conventions and pitfalls
+
+- Deprecated code is kept around: `*_old.py` modules, `fluxoniumLib_newandbroken.py`, and deprecated top-level functions in `MaskLib.py` (marked with "Deprecated - use X instead" comments). Don't extend these — use the replacements in `markerLib`, `utilities`, and `Entities`.
+- `MaskLib.py` has duplicated import blocks at the top (historical accident); harmless but don't replicate the pattern.
+- Layers are referenced by name strings (e.g. `layer='MARKERS'`) that must match names passed to `SetupLayers`.
+- `Chip.add()` shifts objects that have a `.points` attribute (e.g. `Entities.SolidPline`) by `chip.origin_offset` (−chipsize/2 each axis) and grid-snaps them; plain `dxf.polyline`/`dxf.rectangle` objects are added as-is. Scripts that position `SolidPline`-based components therefore pre-compensate with `+chipsize/2` — when mixing entity types at the same location, apply `chip.origin_offset` manually to the plain entities (see `JunctionWithLeads` in `junction array.py`).
+- The layer name `703/0` is invalid per the DXF spec (`/` not allowed); `dxfwrite` writes it but strict readers like `ezdxf` refuse to open the file.
