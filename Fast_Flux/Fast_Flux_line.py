@@ -58,7 +58,7 @@ for pt in markerpts:
 # ===============================================================================
 class Fast_Flux(m.Chip):
      def __init__(self,wafer,chipID,layer,jfingerw,chip_id_loc=(0,0),defaults=None,**kwargs):
-        m.Chip.__init__(self,wafer,chipID,layer,defaults={'w':200,'r_out':10,'r_ins':0})
+        m.Chip.__init__(self,wafer,chipID,layer,structures=[],defaults={'w':200,'r_out':10,'r_ins':0})
         #self.defaults = {'w':200,'r_out':10,'r_ins':0}
         if defaults is not None:
             for d in defaults:

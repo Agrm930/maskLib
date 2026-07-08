@@ -7,7 +7,7 @@ import maskLib.MaskLib as m
 from maskLib.microwaveLib import CPS_straight, CPS_bend,CPS_structure, CPS_taper, CPS_capPad, CPS_hairpin_filter, CPS_loop,CPW_launcher_pos, CPW_straight_pos, CPW_stub_open, CPW_stub_open_pos,CPW_taper_pos, CPS_loop,CPW_launcher
 from maskLib.junctionLib import setupJunctionLayers
 
-from maskLib.qubitLib import qubit_defaults, Hamburgermon
+from maskLib.qubitLib import qubit_defaults, Hamburgermon, SQUIDCoupler, ESDShortingLines
 
 
 from maskLib.markerLib import MarkerSquare, MarkerCross
@@ -148,7 +148,11 @@ def Double_Y_balun(chip, structure, arm_length=500, arm_width=100,
         return vertices
 
     star_pts = star_vertices(arm_length, arm_width, rotation=base_direction)
-    chip.add(SolidPline(center, points=star_pts, bgcolor=bgcolor, **kwargStrip(kwargs)))
+    # SolidPline gets auto-shifted by chip.origin_offset in Chip.add() (it has a
+    # .points attribute), unlike the plain dxf.rectangle() arms below which are
+    # added as-is - pre-compensate so the star lands in the same space as the arms
+    star_center = (center[0] - chip.origin_offset[0], center[1] - chip.origin_offset[1])
+    chip.add(SolidPline(star_center, points=star_pts, bgcolor=bgcolor, **kwargStrip(kwargs)))
 
     # -------------------------------------------------------------------------
  # Step 2: Attach arms outside the star on BASEMETAL
@@ -308,10 +312,12 @@ def CPW_launcher_pos(chip, structure, l_taper=None, l_pad=0, l_gap=0, padw=300, 
                   gnd_width=gnd_width, bgcolor=bgcolor, **kwargs)
 # ===============================================================================
 # chip class definition
+
+
 # ===============================================================================
 class Fast_Flux_Full(m.Chip):
     def __init__(self,wafer,chipID,layer,jfingerw,chip_id_loc=(0,0),defaults=None,**kwargs):
-        m.Chip.__init__(self,wafer,chipID,layer,defaults={'w':200,'r_out':10,'r_ins':0})
+        m.Chip.__init__(self,wafer,chipID,layer,structures=[],defaults={'w':200,'r_out':10,'r_ins':0})
         #self.defaults = {'w':200,'r_out':10,'r_ins':0}
         if defaults is not None:
             for d in defaults:
@@ -339,19 +345,22 @@ class Fast_Flux_Full(m.Chip):
         
         #define the alignment mark
         #Strip_straight(self,self.centered((-1300-1600+3808+790+943.75,0)),100,w=2000)
+        # Taper from the CPS stripline width (10) up to 100 um, then the pad
+        # connects directly to that 100 um taper end - the pad is meant to be
+        # much wider than the taper, not smoothly width-matched to it.
+        pad_taper = {'taper_in': (50, 6, 10, 6, 100), 'taper_out': (50, 6, 100, 6, 10)}
         resonators = [
-            {'pad_length': 6500, 'pad_width': 2900},
-            {'pad_length': 6500, 'pad_width': 2900},
-            {'pad_length': 6500, 'pad_width': 2900},
-            {'pad_length': 6500, 'pad_width': 2900}     
+            {'pad_length': 4000, 'pad_width': 2200, **pad_taper},
+            {'pad_length': 4000, 'pad_width': 2200, **pad_taper},
+            {'pad_length': 4000, 'pad_width': 2200, **pad_taper},
+            {'pad_length': 4000, 'pad_width': 2200, **pad_taper},
         ]
-        end_cap = {'pad_length': 7000, 'pad_width': 2900}
        
         
         #CPW_taper_pos(self, c4, length=300, w0=50, s0=10, w1=0, s1=150, gnd_width=100)
         #CPW_stub_open_pos(self, c4, length=150, w=0, s=150, gnd_width=100, flipped=True)
         
-        CPW_launcher(self, c5)
+        CPW_launcher(self, c4)
         
         Double_Y_balun(self,c4,arm_length=500, arm_width=300,
                    w_cps=6, w_cpw=2, s_cps=100, s_cpw=8,
@@ -360,8 +369,34 @@ class Fast_Flux_Full(m.Chip):
         CPS_taper(self,c4, length=300, w0=6, s0=(300-6)/2, w1=6, s1=10)
         CPS_straight(self,c4, 2000)
         CPS_hairpin_filter(self, c4, resonators)
-        CPS_straight(self,c4, 3000)
-        CPS_loop(self, c4, loop_width=0, loop_height=0,w=6)
+
+        # Thinner CPS line approaching the flux loop (was w=6,s=10 to match the
+        # filter/pads; narrowed down for the final run into the loop).
+        thin_w, thin_s = 3, 5
+        CPS_straight(self, c4, 3000, w=thin_w, s=thin_s)
+
+        # Flux bias loop: the two CPS conductors themselves diverge and
+        # reconverge to form the loop (CPS_loop), rather than a separate
+        # solid-trace shape - this whole chain (launcher/balun/filter) IS the
+        # flux-delivery line, terminating here close to (but not galvanically
+        # connected to) the SQUID below.
+        # loop_height+radius+w/2+s/2 must stay well under squid_pad_separation/2
+        # (the SQUID's pad gap half-width) or the loop's diverging arms collide
+        # with the SQUID's own pads.
+        loop_width, loop_height, loop_radius = 100, 50, 15
+        CPS_loop(self, c4, loop_width=loop_width, loop_height=loop_height,
+                 w=thin_w, s=thin_s, radius=loop_radius)
+
+        # SQUID coupler (Fig. 10(b,c)) - a separate, independent structure (its
+        # capacitive pads couple to the 3D cavity, not to this flux line). Placed
+        # just past where the CPS line re-merges after the loop, rotated 90
+        # degrees left (CCW) so its pads extend clear of the loop's approach.
+        squid_pad_width = 800
+        squid_pad_separation = 200
+        loop_clearance = 50  # gap left between the loop's far end and the SQUID loop
+        squid_structure = m.Structure(self, c4.getPos((loop_clearance, 0)), direction=c4.direction + 90)
+        SQUIDCoupler(self, squid_structure, pad_width=squid_pad_width, pad_separation=squid_pad_separation)
+        ESDShortingLines(self, squid_structure, pad_width=squid_pad_width, pad_separation=squid_pad_separation)
         
         
         """Hamburgermon(
