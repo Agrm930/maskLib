@@ -294,7 +294,7 @@ def Strip_taper(chip,structure,length=None,w0=None,w1=None,bgcolor=None,offset=(
     if length is None:
         length = math.sqrt(3)*abs(w0/2-w1/2)
     
-    chip.add(SkewRect(struct().start,length,w0,offset,w1,rotation=struct().direction,valign=const.MIDDLE,edgeAlign=const.MIDDLE,bgcolor=bgcolor,**kwargs),structure=structure,offsetVector=vadd((length,0),offset))
+    chip.add(SkewRect(_originCompensatedInsert(chip, struct().start, struct().direction),length,w0,offset,w1,rotation=struct().direction,valign=const.MIDDLE,edgeAlign=const.MIDDLE,bgcolor=bgcolor,**kwargs),structure=structure,offsetVector=vadd((length,0),offset))
 
 def Strip_bend(chip,structure,angle=90,CCW=True,w=None,radius=None,ptDensity=120,bgcolor=None,**kwargs):
     def struct():
@@ -1755,6 +1755,15 @@ def CPS_bend(chip, structure, angle=90, CCW=True, w=None, s=None, radius=None,
         angle=CCW and -angle or angle
     )
 
+def _originCompensatedInsert(chip, insert, rotation_deg):
+    ''' Chip.add() shifts the .points of eager SolidPline-based shapes (SkewRect, RoundRect,
+    Star, ...) by chip.origin_offset while they're still in their local, pre-rotation frame -
+    that shift then gets rotated along with the rest of the shape's points, instead of applying
+    untransformed to the insert point like it would for a plain dxf.rectangle. Pre-correct the
+    insert point here so the shape ends up where callers actually asked for it. '''
+    r_oo = rotate_2d(chip.origin_offset, math.radians(rotation_deg))
+    return (insert[0] - r_oo[0], insert[1] - r_oo[1])
+
 def CPS_taper(chip, structure, length=None, w0=None, s0=None, w1=None, s1=None, bgcolor=None, offset=(0,0), **kwargs):
     def struct():
         if isinstance(structure, m.Structure):
@@ -1793,13 +1802,13 @@ def CPS_taper(chip, structure, length=None, w0=None, s0=None, w1=None, s1=None, 
 
     # Lower strip: starts at -w0/2 (inner edge), grows downward by s0
     # skews so inner edge tracks -w1/2 at the far end
-    chip.add(SkewRect(struct().getPos((0, -w0/2)), length, s0,
+    chip.add(SkewRect(_originCompensatedInsert(chip, struct().getPos((0, -w0/2)), struct().direction), length, s0,
              (offset[0], w0/2 - w1/2 + offset[1]), s1,
              rotation=struct().direction, valign=const.TOP, edgeAlign=const.TOP,
              bgcolor=bgcolor, **kwargs))
     # Upper strip: starts at +w0/2 (inner edge), grows upward by s0
     # skews so inner edge tracks +w1/2 at the far end
-    chip.add(SkewRect(struct().getPos((0,  w0/2)), length, s0,
+    chip.add(SkewRect(_originCompensatedInsert(chip, struct().getPos((0,  w0/2)), struct().direction), length, s0,
              (offset[0], w1/2 - w0/2 + offset[1]), s1,
              rotation=struct().direction, valign=const.BOTTOM, edgeAlign=const.BOTTOM,
              bgcolor=bgcolor, **kwargs), structure=structure, offsetVector=(length + offset[0], offset[1]))
@@ -1881,14 +1890,14 @@ def CPS_circular_taper(chip, structure, length=None, w0=None, s0=None, w1=None, 
 
         # Draw bottom strip segment: inner edge at -w/2, grows downward
         chip.add(SkewRect(
-            struct().getPos((x0, -w_at_t0/2)), seg_length, s_at_t0,
+            _originCompensatedInsert(chip, struct().getPos((x0, -w_at_t0/2)), struct().direction), seg_length, s_at_t0,
             (0, w_at_t0/2 - w_at_t1/2), s_at_t1,
             rotation=struct().direction, valign=const.TOP, edgeAlign=const.TOP,
             bgcolor=bgcolor, **kwargs))
 
         # Draw top strip segment: inner edge at +w/2, grows upward
         chip.add(SkewRect(
-            struct().getPos((x0,  w_at_t0/2)), seg_length, s_at_t0,
+            _originCompensatedInsert(chip, struct().getPos((x0,  w_at_t0/2)), struct().direction), seg_length, s_at_t0,
             (0, w_at_t1/2 - w_at_t0/2), s_at_t1,
             rotation=struct().direction, valign=const.BOTTOM, edgeAlign=const.BOTTOM,
             bgcolor=bgcolor, **kwargs))
@@ -1983,6 +1992,40 @@ def CPS_hairpin_filter(chip, structure, resonators, bgcolor=None, **kwargs):
     CPS_circular_taper(chip, structure, *taper_in)
     CPS_capPad(chip, structure, pad_length, pad_width)
     CPS_circular_taper(chip, structure, *taper_out)
+
+
+def CPS_patch_filter(chip, structure, resonators, bgcolor=None, **kwargs):
+    """
+    Edge-coupled (combline-style) CPS bandpass filter: a chain of rectangular
+    resonator patches connected end-to-end by short narrow tabs, instead of
+    CPS_hairpin_filter's single continuously-meandering line. Each patch acts
+    as its own resonator, coupled to its neighbors mainly through proximity/
+    fringing fields at the tab junctions rather than a long shared conductor -
+    matching the stacked-patch filter topology in arXiv:2503.13953 Fig. 10(a,d).
+
+    Parameters
+    ----------
+    resonators : list of dicts, each with keys:
+        'patch_length'     : length of the resonator patch along the line (default 2000)
+        'patch_width'       : CPS strip width of the patch (default 2000)
+        'gap'               : CPS gap width for both the patch and its connector
+                              (defaults to structure's 'w' default)
+        'connector_length'  : length of the narrow tab to the *next* patch (default 50)
+        'connector_width'   : CPS strip width of that connecting tab
+                              (defaults to structure's 's' default)
+    The last resonator's connector_length/connector_width are ignored (no trailing tab).
+    """
+    for i, res in enumerate(resonators):
+        patch_length = res.get('patch_length', 2000)
+        patch_width  = res.get('patch_width', 2000)
+        gap = res.get('gap', None)
+
+        CPS_capPad(chip, structure, patch_length, patch_width, w=gap, bgcolor=bgcolor, **kwargs)
+
+        if i < len(resonators) - 1:
+            connector_length = res.get('connector_length', 50)
+            connector_width  = res.get('connector_width', None)
+            CPS_straight(chip, structure, connector_length, w=gap, s=connector_width, bgcolor=bgcolor, **kwargs)
 
 
 def CPS_loop(chip, structure, loop_width=None, loop_height=None, w=None, s=None, radius=None, bgcolor=None, **kwargs):
@@ -2193,7 +2236,7 @@ def CPW_stub_open_pos(chip, structure, length=0, r_out=None, r_ins=None, w=None,
 
     # Center strip
     chip.add(RoundRect(
-        struct().getPos((dx, -w/2)), length, w,
+        _originCompensatedInsert(chip, struct().getPos((dx, -w/2)), struct().direction), length, w,
         min(r_out, length),
         roundCorners=[0, 1, 1, 0], hflip=flipped,
         valign=const.BOTTOM, rotation=struct().direction,
@@ -2201,7 +2244,7 @@ def CPW_stub_open_pos(chip, structure, length=0, r_out=None, r_ins=None, w=None,
 
     # Upper ground plane: starts at outer edge of upper gap (w/2 + s)
     chip.add(RoundRect(
-        struct().getPos((dx, w/2 + s)), length, gnd_width,
+        _originCompensatedInsert(chip, struct().getPos((dx, w/2 + s)), struct().direction), length, gnd_width,
         min(r_out, length),
         roundCorners=[0, 1, 1, 0], hflip=flipped,
         valign=const.BOTTOM, rotation=struct().direction,
@@ -2209,7 +2252,7 @@ def CPW_stub_open_pos(chip, structure, length=0, r_out=None, r_ins=None, w=None,
 
     # Lower ground plane: starts at outer edge of lower gap (w/2 + s)
     chip.add(RoundRect(
-        struct().getPos((dx, -w/2 - s)), length, -gnd_width,
+        _originCompensatedInsert(chip, struct().getPos((dx, -w/2 - s)), struct().direction), length, -gnd_width,
         min(r_out, length),
         roundCorners=[0, 1, 1, 0], hflip=flipped,
         valign=const.TOP, rotation=struct().direction,
@@ -2261,21 +2304,21 @@ def CPW_taper_pos(chip, structure, length=None, w0=None, s0=None, w1=None, s1=No
 
     # Center strip taper: starts at -w0/2, tapers to w1
     chip.add(SkewRect(
-        struct().getPos((0, -w0/2)), length, w0,
+        _originCompensatedInsert(chip, struct().getPos((0, -w0/2)), struct().direction), length, w0,
         (offset[0], (w1 - w0)/2 + offset[1]), w1,
         rotation=struct().direction, valign=const.BOTTOM, edgeAlign=const.BOTTOM,
         bgcolor=bgcolor, **kwargs))
 
     # Upper ground plane taper: inner edge moves from w0/2+s0 to w1/2+s1
     chip.add(SkewRect(
-        struct().getPos((0, w0/2 + s0)), length, gnd_width,
+        _originCompensatedInsert(chip, struct().getPos((0, w0/2 + s0)), struct().direction), length, gnd_width,
         (offset[0], (w1/2 + s1) - (w0/2 + s0) + offset[1]), gnd_width,
         rotation=struct().direction, valign=const.BOTTOM, edgeAlign=const.BOTTOM,
         bgcolor=bgcolor, **kwargs))
 
     # Lower ground plane taper: inner edge moves from -(w0/2+s0) to -(w1/2+s1)
     chip.add(SkewRect(
-        struct().getPos((0, -w0/2 - s0)), length, -gnd_width,
+        _originCompensatedInsert(chip, struct().getPos((0, -w0/2 - s0)), struct().direction), length, -gnd_width,
         (offset[0], (w0/2 + s0) - (w1/2 + s1) + offset[1]), -gnd_width,
         rotation=struct().direction, valign=const.TOP, edgeAlign=const.TOP,
         bgcolor=bgcolor, **kwargs),
