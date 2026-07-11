@@ -304,12 +304,20 @@ class Sweep3D:
     # ---- export ----------------------------------------------------------
 
     def export_workbook(self, path, grid_nx=None, grid_ny=None, strict=True,
-                        layer_dose_table=None):
+                        layer_dose_table=None, param_defaults=None,
+                        constants=None, measured_columns=None):
         '''
         Write an .xlsx workbook (requires openpyxl) with:
 
           'parameters'  -- one row per field: label, ix, iy, and the value
-                           of every swept parameter (for analysis scripts)
+                           of every swept parameter (for analysis scripts).
+                           With param_defaults, NON-swept geometry appears
+                           as constant columns too, so each row fully
+                           describes its junction; with measured_columns,
+                           empty columns are appended for measurement entry.
+          'constants'   -- only if constants is given: name/value rows of
+                           process constants (resist stack, angle, doses...)
+                           making the workbook self-contained for analysis
           'map'         -- field labels laid out in cells matching their
                            position on the chip (top row = top of chip)
           one sheet per swept parameter -- its values laid out like the
@@ -321,6 +329,12 @@ class Sweep3D:
                            dose). Pass rows of (name, gds, 'yes'/'no', dose);
                            an optional 5th element (hex color like 'C6EFCE')
                            fills the row for status highlighting.
+
+        param_defaults: {parameter_name: value} for geometry NOT being swept
+        (same units as drawn, i.e. um); swept parameters take precedence.
+        constants: {name: value} written to the 'constants' sheet.
+        measured_columns: list of empty column headers to append, or True
+        for the default ['R_N_ohm', 'exclude', 'measured_date'].
 
         Covers the reference grid by default; pass grid_nx/grid_ny (and
         strict=False) to export a secondary chip's smaller grid, e.g. a
@@ -338,14 +352,32 @@ class Sweep3D:
             return self.field(ix, iy, grid_nx=gx, grid_ny=gy, strict=strict)
 
         pnames = self.param_names()
+        # constant columns for geometry not being swept (swept ones win)
+        defaults = {k: v for k, v in (param_defaults or {}).items()
+                    if k not in pnames}
+        dnames = list(defaults)
+        if measured_columns is True:
+            measured_columns = ['R_N_ohm', 'exclude', 'measured_date']
+        mnames = list(measured_columns or [])
+
         wb = Workbook()
         ws = wb.active
         ws.title = 'parameters'
-        ws.append(['label', 'ix', 'iy'] + pnames)
+        ws.append(['label', 'ix', 'iy'] + pnames + dnames + mnames)
         for ix in range(gx):
             for iy in range(gy):
                 params, flabel = lookup(ix, iy)
-                ws.append([flabel, ix, iy] + [float(params[p]) for p in pnames])
+                ws.append([flabel, ix, iy]
+                          + [float(params[p]) for p in pnames]
+                          + [float(defaults[d]) for d in dnames]
+                          + [None] * len(mnames))
+
+        if constants:
+            s = wb.create_sheet('constants')
+            s.append(['name', 'value'])
+            for name, value in constants.items():
+                s.append([name, value])
+            s.column_dimensions['A'].width = 32
 
         def grid_sheet(title, cellvalue):
             '''new sheet laid out like the chip: columns = ix, rows = iy
